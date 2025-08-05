@@ -1,77 +1,105 @@
-from flask import Flask, render_template, request
 import pandas as pd
-from pulp import LpProblem, LpMaximize, LpVariable, lpSum, LpBinary
+import pulp
+from flask import Flask, render_template, request
+import os
 
 app = Flask(__name__)
+
+# Chargement et préparation des données
 DATA_PATH = "player-data-full-2025-june.csv"
-
-# Chargement des données
 df = pd.read_csv(DATA_PATH, low_memory=False)
-df = df.dropna(subset=["positions", "name"])
-df["value"] = pd.to_numeric(df["value"], errors="coerce")
-numeric_columns = df.select_dtypes(include=["number"]).columns.tolist()
 
-# Formations possibles : dict(poste : nb joueurs)
+# On renomme les colonnes sensibles
+df = df.rename(columns={"positions": "position", "value": "value_eur", "club_name": "club"})
+
+# Filtrage : garder les lignes avec des infos essentielles
+df = df.dropna(subset=["position", "name", "value_eur", "club"])
+
+# Nettoyage des données
+df = df[df["value_eur"].apply(lambda x: str(x).replace(".", "").isdigit())]
+df["value_eur"] = df["value_eur"].astype(float)
+df["position"] = df["position"].astype(str)
+
+# Colonnes numériques filtrables
+numeric_criteria = sorted([col for col in df.select_dtypes(include=["float", "int"]).columns if df[col].nunique() > 20 and not col.startswith("gk_")])
+
+# Formations possibles
 formations = {
-    "4-4-2": {"GK": 1, "DEF": 4, "MID": 4, "FWD": 2},
-    "4-3-3": {"GK": 1, "DEF": 4, "MID": 3, "FWD": 3},
-    "3-4-3": {"GK": 1, "DEF": 3, "MID": 4, "FWD": 3},
-    "5-4-1": {"GK": 1, "DEF": 5, "MID": 4, "FWD": 1},
-    "3-5-2": {"GK": 1, "DEF": 3, "MID": 5, "FWD": 2},
-    "4-5-1": {"GK": 1, "DEF": 4, "MID": 5, "FWD": 1},
+    "4-4-2": {"GK": 1, "DF": 4, "MF": 4, "FW": 2},
+    "4-3-3": {"GK": 1, "DF": 4, "MF": 3, "FW": 3},
+    "3-4-3": {"GK": 1, "DF": 3, "MF": 4, "FW": 3},
+    "5-4-1": {"GK": 1, "DF": 5, "MF": 4, "FW": 1},
+    "3-5-2": {"GK": 1, "DF": 3, "MF": 5, "FW": 2},
+    "4-5-1": {"GK": 1, "DF": 4, "MF": 5, "FW": 1}
 }
 
-def poste_simplifie(positions):
-    if isinstance(positions, str):
-        if "GK" in positions:
-            return "GK"
-        elif any(p in positions for p in ["CB", "RB", "LB", "RWB", "LWB"]):
-            return "DEF"
-        elif any(p in positions for p in ["CDM", "CM", "CAM", "RM", "LM"]):
-            return "MID"
-        elif any(p in positions for p in ["ST", "CF", "RW", "LW"]):
-            return "FWD"
-    return "AUTRE"
+# Utilitaires pour filtrer par rôle
+def poste_est(role, poste):
+    role = role.upper()
+    poste = poste.upper()
+    if poste == "GK":
+        return role == "GK"
+    if poste == "DF":
+        return any(p in role for p in ["CB", "LB", "RB"])
+    if poste == "MF":
+        return any(p in role for p in ["CM", "CDM", "CAM", "LM", "RM"])
+    if poste == "FW":
+        return any(p in role for p in ["ST", "CF", "RW", "LW"])
+    return False
 
-df["poste_simplifie"] = df["positions"].apply(poste_simplifie)
+# Optimisation
+def generer_equipe(critere, budget_millions, formation):
+    budget = budget_millions * 1_000_000
+    compo = formations[formation]
 
-@app.route("/", methods=["GET"])
-def index():
-    return render_template("index.html", numeric_columns=numeric_columns, team=None, formations=formations)
-
-@app.route("/build_team", methods=["POST"])
-def build_team():
-    budget = float(request.form["budget"]) * 1e6
-    criterion = request.form["criterion"]
-    formation = request.form["formation"]
-    poste_requis = formations[formation]
-
-    data = df.dropna(subset=["value", criterion])
-    data = data[data["poste_simplifie"].isin(poste_requis.keys())]
-
-    players = list(data.index)
-    model = LpProblem("TeamSelection", LpMaximize)
-    x = LpVariable.dicts("x", players, cat=LpBinary)
+    model = pulp.LpProblem("Equipe_Optimale", pulp.LpMaximize)
+    joueurs = list(df.index)
+    x = pulp.LpVariable.dicts("joueur", joueurs, 0, 1, pulp.LpBinary)
 
     # Objectif
-    model += lpSum(data.loc[i, criterion] * x[i] for i in players)
+    model += pulp.lpSum([x[i] * df.loc[i, critere] for i in joueurs if not pd.isna(df.loc[i, critere])]), "Score_Total"
 
-    # Contraintes de budget
-    model += lpSum(data.loc[i, "value"] * x[i] for i in players) <= budget
+    # Contraintes
+    for poste, nb in compo.items():
+        model += pulp.lpSum([x[i] for i in joueurs if poste_est(df.loc[i, "position"], poste)]) == nb
 
-    # Contraintes de poste
-    for poste, nombre in poste_requis.items():
-        model += lpSum(x[i] for i in players if data.loc[i, "poste_simplifie"] == poste) == nombre
-
-    # Total joueurs = 11
-    model += lpSum(x[i] for i in players) == 11
+    model += pulp.lpSum([x[i] * df.loc[i, "value_eur"] for i in joueurs]) <= budget
+    model += pulp.lpSum([x[i] for i in joueurs]) == 11
 
     model.solve()
 
-    selected_players = data.loc[[i for i in players if x[i].value() == 1]]
-    selected_players = selected_players[["name", "club_name", "positions", "poste_simplifie", "value", criterion]]
+    selection = []
+    for i in joueurs:
+        if x[i].varValue == 1:
+            joueur = df.loc[i]
+            role = joueur["position"]
+            selection.append({
+                "nom": joueur["name"],
+                "club": joueur["club"],
+                "poste": role,
+                "valeur": int(joueur["value_eur"]),
+                "role": [p for p in compo if poste_est(role, p)][0],
+                "critere": joueur.get(critere, "—")
+            })
 
-    return render_template("index.html", numeric_columns=numeric_columns, team=selected_players, formations=formations)
+    return selection
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+@app.route('/', methods=['GET', 'POST'])
+def index():
+    equipe = []
+    selected_critere = None
+    if request.method == 'POST':
+        try:
+            budget = float(request.form['budget'])  # en millions
+            critere = request.form['critere']
+            formation = request.form['formation']
+            selected_critere = critere
+            equipe = generer_equipe(critere, budget, formation)
+        except Exception as e:
+            print("Erreur :", e)
+            equipe = []
+
+    return render_template('index.html', criteres=numeric_criteria, formations=formations.keys(), equipe=equipe, selected_critere=selected_critere)
+
+if __name__ == '__main__':
+    app.run(debug=True)

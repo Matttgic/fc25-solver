@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>FC25 Team Builder</title>
+</head>
+<body>
+    <h1>FC25 - Team Optimizer</h1>
+    <form method="post">
+        <label>Budget (en millions d'euros):</label>
+        <input type="number" name="budget" step="0.1" value="500" /><br><br>
+
+        <label>Formation:</label>
+        <select name="formation">
+            {% for f in formations %}
+                <option value="{{ f }}">{{ f }}</option>
+            {% endfor %}
+        </select><br><br>
+
+        <h3>Critères à maximiser :</h3>
+        {% for c in criteria %}
+            <input type="checkbox" name="criteria" value="{{ c }}"> {{ c }}<br>
+        {% endfor %}<br>
+
+        <h3>Filtres personnalisés (ex: pays, club, taille, etc) :</h3>
+        {% for c in criteria %}
+            <label>{{ c }} :</label>
+            <input type="text" name="{{ c }}"><br>
+        {% endfor %}<br>
+
+        <input type="submit" value="Construire l'équipe">
+    </form>
+
+    {% if result %}
+        <h2>Equipe sélectionnée</h2>
+        <table border="1">
+            <tr>
+                <th>Nom</th><th>Poste</th><th>Valeur</th><th>Score</th>
+            </tr>
+            {% for p in result %}
+            <tr>
+                <td>{{ p['name'] }}</td>
+                <td>{{ p['main_position'] }}</td>
+                <td>{{ "{:,}".format(p['value']) }}</td>
+                <td>{{ "{:.2f}".format(p['selected_criteria_sum']) }}</td>
+            </tr>
+            {% endfor %}
+        </table>
+    {% endif %}
+</body>
+</html>

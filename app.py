@@ -1,61 +1,79 @@
-import pandas as pd
 import streamlit as st
-from pulp import LpMaximize, LpProblem, LpVariable, lpSum, LpBinary
+import pandas as pd
+from pulp import LpProblem, LpVariable, lpSum, LpMaximize, LpBinary
+
+# ------------------ Chargement des données ------------------
 
 @st.cache_data
 def load_data():
     df = pd.read_csv("player-data-full-2025-june.csv")
-    df["value"] = pd.to_numeric(df["value"], errors="coerce")
+
+    # Nettoyage valeur marchande
+    df["value"] = df["value"].astype(str).str.replace("€", "").str.replace("M", "").str.replace("K", "")
+    df["value"] = pd.to_numeric(df["value"], errors='coerce')
     df = df.dropna(subset=["value"])
-    df = df[df["value"] > 0]
+    df["value"] = df["value"].astype(float)
+
+    # Conversion position principale
+    df["main_position"] = df["positions"].astype(str).str.split(",").str[0]
+
     return df
 
 df = load_data()
 
-st.title("⚽ FC25 – Générateur d'équipe optimale")
+# ------------------ Configuration de l'app ------------------
 
-# Critères disponibles : toutes les colonnes numériques
-numeric_columns = df.select_dtypes(include='number').columns.tolist()
-critere = st.selectbox("🎯 Critère à maximiser", numeric_columns)
+st.set_page_config(page_title="FC25 Solver", layout="wide")
+st.title("⚽ Générateur d’équipe FC25")
 
-# Budget (en millions d’euros)
-budget = st.slider("💰 Budget max (en M€)", int(df["value"].min()), 1000, 500)
+# Critères numériques disponibles
+numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+critere = st.selectbox("📊 Critère d’optimisation", numeric_cols)
+
+# Budget max
+min_budget = int(df["value"].min())
+budget = st.slider("💰 Budget max (en M€)", min_value=min_budget, max_value=1000, value=500)
 
 # Formations possibles
 formations = {
-    "4-4-2": {"GK": 1, "DF": 4, "MF": 4, "FW": 2},
-    "4-3-3": {"GK": 1, "DF": 4, "MF": 3, "FW": 3},
-    "3-4-3": {"GK": 1, "DF": 3, "MF": 4, "FW": 3},
-    "5-4-1": {"GK": 1, "DF": 5, "MF": 4, "FW": 1},
-    "3-5-2": {"GK": 1, "DF": 3, "MF": 5, "FW": 2},
-    "4-2-3-1": {"GK": 1, "DF": 4, "MF": 5, "FW": 1}
+    "4-4-2": {"GK":1, "DF":4, "MF":4, "FW":2},
+    "3-4-3": {"GK":1, "DF":3, "MF":4, "FW":3},
+    "4-3-3": {"GK":1, "DF":4, "MF":3, "FW":3},
+    "5-3-2": {"GK":1, "DF":5, "MF":3, "FW":2},
+    "5-4-1": {"GK":1, "DF":5, "MF":4, "FW":1},
+    "3-5-2": {"GK":1, "DF":3, "MF":5, "FW":2}
 }
-formation = st.selectbox("📋 Formation", list(formations.keys()))
-structure = formations[formation]
+formation_choice = st.selectbox("📐 Formation", list(formations.keys()))
+structure = formations[formation_choice]
 
-if st.button("🚀 Construire l'équipe"):
-    model = LpProblem("Optimisation_Equipe", LpMaximize)
-    players = df.index
-    x = LpVariable.dicts("joueur", players, cat=LpBinary)
+# ------------------ Optimisation ------------------
 
-    # Contraintes
-    model += lpSum(x[i] * df.loc[i, "value"] for i in players) <= budget
+if st.button("✅ Construire l’équipe"):
+    model = LpProblem("Optimisation_equipe", LpMaximize)
 
-    for poste, nombre in structure.items():
-        model += lpSum(x[i] for i in players if poste in df.loc[i, "positions"]) == nombre
+    joueurs = list(df.index)
+    x = LpVariable.dicts("joueur", joueurs, cat=LpBinary)
 
-    model += lpSum(x[i] * df.loc[i, critere] for i in players)
+    # Fonction à maximiser
+    model += lpSum(x[i] * df.loc[i, critere] for i in joueurs)
 
+    # Contraintes de poste (selon structure)
+    for poste, count in structure.items():
+        model += lpSum(x[i] for i in joueurs if poste in str(df.loc[i, "main_position"])) == count
+
+    # Contrainte de budget
+    model += lpSum(x[i] * df.loc[i, "value"] for i in joueurs) <= budget
+
+    # Résolution
     model.solve()
 
-    selected = [i for i in players if x[i].varValue == 1]
+    # Affichage équipe
+    st.subheader("📋 Équipe sélectionnée")
+    selected = df[[critere, "name", "main_position", "value", "club_name"]].copy()
+    selected["selection"] = [x[i].varValue if i in x else 0 for i in selected.index]
+    selected = selected[selected["selection"] == 1].sort_values("main_position")
 
-    if selected:
-        st.success("✅ Équipe générée avec succès !")
-        st.dataframe(df.loc[selected][["name", "positions", "value", critere]])
-        total_value = df.loc[selected]["value"].sum()
-        total_score = df.loc[selected][critere].sum()
-        st.markdown(f"**💶 Coût total :** `{total_value:.1f} M€`")
-        st.markdown(f"**📈 Score total ({critere}) :** `{total_score:.2f}`")
+    if not selected.empty:
+        st.dataframe(selected.drop(columns=["selection"]), use_container_width=True)
     else:
-        st.error("❌ Aucune équipe possible avec ce budget et cette formation.")
+        st.warning("❌ Aucune équipe ne peut être générée avec ces critères.")

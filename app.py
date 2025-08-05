@@ -1,94 +1,95 @@
 from flask import Flask, render_template, request
 import pandas as pd
-from pulp import LpMaximize, LpProblem, LpVariable, lpSum
-import os
+from pulp import LpProblem, LpMaximize, LpVariable, lpSum, LpBinary
 
 app = Flask(__name__)
 
-# Chargement des données
+# Charger les données
 DATA_PATH = "player-data-full-2025-june.csv"
 df = pd.read_csv(DATA_PATH, low_memory=False)
+
+# Nettoyage de base
 df = df.dropna(subset=["positions", "name"])
+df["positions"] = df["positions"].apply(lambda x: x.split(",")[0] if isinstance(x, str) else "UNK")
 
-# On transforme les colonnes numériques
-numeric_criteria = df.select_dtypes(include='number').columns.tolist()
+# Colonnes numériques disponibles pour optimiser
+numeric_criteria = df.select_dtypes(include=["number"]).columns.tolist()
+default_critere = "sprint_speed" if "sprint_speed" in numeric_criteria else numeric_criteria[0]
 
-# Formations possibles
+# Toutes les formations possibles
 formations = {
-    "4-4-2": {"GK": 1, "DEF": 4, "MID": 4, "FWD": 2},
-    "4-3-3": {"GK": 1, "DEF": 4, "MID": 3, "FWD": 3},
-    "3-5-2": {"GK": 1, "DEF": 3, "MID": 5, "FWD": 2},
-    "3-4-3": {"GK": 1, "DEF": 3, "MID": 4, "FWD": 3},
-    "5-3-2": {"GK": 1, "DEF": 5, "MID": 3, "FWD": 2},
-    "5-4-1": {"GK": 1, "DEF": 5, "MID": 4, "FWD": 1},
-    "4-5-1": {"GK": 1, "DEF": 4, "MID": 5, "FWD": 1},
-    "4-2-3-1": {"GK": 1, "DEF": 4, "MID": 5, "FWD": 1}
+    "4-4-2": {"GK": 1, "DF": 4, "MF": 4, "FW": 2},
+    "4-3-3": {"GK": 1, "DF": 4, "MF": 3, "FW": 3},
+    "3-4-3": {"GK": 1, "DF": 3, "MF": 4, "FW": 3},
+    "5-3-2": {"GK": 1, "DF": 5, "MF": 3, "FW": 2},
+    "3-5-2": {"GK": 1, "DF": 3, "MF": 5, "FW": 2},
+    "5-4-1": {"GK": 1, "DF": 5, "MF": 4, "FW": 1},
+    "4-5-1": {"GK": 1, "DF": 4, "MF": 5, "FW": 1},
 }
 
-# Simplification du poste
-def simplify_position(pos):
-    if "GK" in pos:
+# Fonction pour associer un poste principal simplifié
+def simplifie_poste(row):
+    if "GK" in row["positions"]:
         return "GK"
-    elif any(x in pos for x in ["CB", "LB", "RB"]):
-        return "DEF"
-    elif any(x in pos for x in ["CM", "CDM", "CAM", "LM", "RM"]):
-        return "MID"
-    elif any(x in pos for x in ["ST", "CF", "RW", "LW"]):
-        return "FWD"
-    else:
-        return "MID"
+    elif "DF" in row["positions"]:
+        return "DF"
+    elif "MF" in row["positions"]:
+        return "MF"
+    elif "FW" in row["positions"]:
+        return "FW"
+    return "UNK"
 
-df["role"] = df["positions"].apply(simplify_position)
+df["poste"] = df.apply(simplifie_poste, axis=1)
+df["value"] = pd.to_numeric(df["value"], errors="coerce")
 
-@app.route('/', methods=['GET', 'POST'])
+@app.route("/", methods=["GET", "POST"])
 def index():
     equipe = []
-    selected_critere = None
+    selected_critere = default_critere
+    selected_formation = "4-4-2"
+    budget = 500_000_000  # budget par défaut : 500M
 
-    if request.method == 'POST':
-        selected_critere = request.form['critere']
-        budget_input = request.form['budget']
-        formation_name = request.form['formation']
-
-        # gestion format budget : "500" => 500M
+    if request.method == "POST":
         try:
-            budget = float(budget_input) * 1_000_000
-        except:
-            budget = 500_000_000  # valeur par défaut
+            selected_critere = request.form.get("critere", default_critere)
+            selected_formation = request.form.get("formation", "4-4-2")
+            budget = int(float(request.form.get("budget", "500")) * 1_000_000)
 
-        formation = formations.get(formation_name, {"GK": 1, "DEF": 4, "MID": 4, "FWD": 2})
+            poste_structure = formations.get(selected_formation, formations["4-4-2"])
 
-        model = LpProblem(name="team-builder", sense=LpMaximize)
-        players = df.index.tolist()
-        x = {i: LpVariable(name=f"x_{i}", cat="Binary") for i in players}
+            # Filtrer uniquement les joueurs valides pour le critère choisi
+            df_valid = df.dropna(subset=[selected_critere, "value"])
 
-        # Objectif : maximiser le critère sélectionné
-        model += lpSum(df.loc[i, selected_critere] * x[i] for i in players)
+            # Variables de décision
+            joueurs = df_valid.index.tolist()
+            x = LpVariable.dicts("x", joueurs, cat=LpBinary)
 
-        # Contraintes : budget
-        model += lpSum(df.loc[i, "value"] * x[i] for i in players) <= budget
+            prob = LpProblem("TeamSelection", LpMaximize)
 
-        # Contraintes : formation
-        for role, count in formation.items():
-            model += lpSum(x[i] for i in players if df.loc[i, "role"] == role) == count
+            # Objectif : maximiser le score du critère
+            prob += lpSum(df_valid.loc[i, selected_critere] * x[i] for i in joueurs)
 
-        # Contraintes : 11 joueurs
-        model += lpSum(x[i] for i in players) == 11
+            # Contraintes par poste
+            for poste, nb in poste_structure.items():
+                prob += lpSum(x[i] for i in joueurs if df_valid.loc[i, "poste"] == poste) == nb
 
-        # Résolution
-        model.solve()
+            # Contraintes de budget
+            prob += lpSum(df_valid.loc[i, "value"] * x[i] for i in joueurs) <= budget
 
-        # Résultat
-        selected = [i for i in players if x[i].value() == 1]
-        equipe = df.loc[selected].to_dict(orient="records")
+            prob.solve()
 
-    return render_template('index.html',
+            equipe = df_valid.loc[[i for i in joueurs if x[i].varValue == 1]].to_dict(orient="records")
+        except Exception as e:
+            print(f"Erreur : {e}")
+            equipe = []
+
+    return render_template("index.html",
                            criteres=numeric_criteria,
-                           formations=list(formations),
+                           formations=list(formations.keys()),
                            equipe=equipe,
-                           selected_critere=selected_critere)
+                           selected_critere=selected_critere,
+                           selected_formation=selected_formation,
+                           budget=budget // 1_000_000)
 
-# Pour Render
-if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 10000))
-    app.run(debug=False, host='0.0.0.0', port=port)
+if __name__ == "__main__":
+    app.run(debug=True, host="0.0.0.0", port=5000)

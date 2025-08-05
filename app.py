@@ -1,87 +1,79 @@
 import streamlit as st
 import pandas as pd
-from pulp import LpProblem, LpMaximize, LpVariable, lpSum, LpBinary
+from pulp import LpProblem, LpVariable, lpSum, LpMaximize, LpBinary
 
-# === Chargement des données ===
 @st.cache_data
 def load_data():
     df = pd.read_csv("player-data-full-2025-june.csv")
-    df = df.dropna(subset=["positions", "name", "value"])
-    df = df[df["value"] > 0]  # On garde les joueurs ayant une valeur définie
+    df = df[df["value"].apply(lambda x: str(x).replace(",", "").replace("€", "").replace("M", "").replace("K", "").replace(".", "").isdigit())]
+    df["value"] = df["value"].replace("€", "", regex=True).replace(",", "", regex=True)
+    df["value"] = df["value"].replace("M", "", regex=True).astype(float)
+    df = df[df["value"] > 0]
+    df = df[df["positions"].notna()]
     return df
 
 df = load_data()
 
-# === Interface utilisateur ===
-st.title("FC25 - Générateur d’équipe")
+# --- UI ---
+st.title("FC25 - Générateur d'équipe intelligente")
 
-# Budget en millions
-budget_millions = st.slider("Budget total (en millions d'euros)", 50, 1000, 500)
-budget = budget_millions * 1_000_000  # conversion
+# Critère à maximiser
+all_numeric_cols = df.select_dtypes(include='number').columns.tolist()
+selected_critere = st.selectbox("Choisir le critère à maximiser", options=all_numeric_cols)
 
-# Choix de la formation
+# Budget
+budget = st.slider("Budget maximum (en millions €)", 50, 1000, 500, step=10)
+
+# Bouton
+generate = st.button("🎯 Construire l'équipe optimale")
+
+# Formations dispo
 formations = {
     "4-4-2": {"GK": 1, "DF": 4, "MF": 4, "FW": 2},
     "4-3-3": {"GK": 1, "DF": 4, "MF": 3, "FW": 3},
     "3-4-3": {"GK": 1, "DF": 3, "MF": 4, "FW": 3},
+    "3-5-2": {"GK": 1, "DF": 3, "MF": 5, "FW": 2},
     "5-3-2": {"GK": 1, "DF": 5, "MF": 3, "FW": 2},
     "5-4-1": {"GK": 1, "DF": 5, "MF": 4, "FW": 1},
-    "3-5-2": {"GK": 1, "DF": 3, "MF": 5, "FW": 2},
 }
 formation_choice = st.selectbox("Formation", list(formations.keys()))
+structure = formations[formation_choice]
 
-# Colonnes numériques disponibles pour l’optimisation
-numeric_cols = df.select_dtypes(include='number').columns.tolist()
-excluded_cols = ['player_id', 'club_id', 'country_id', 'value', 'wage']
-criteres_disponibles = [c for c in numeric_cols if c not in excluded_cols]
+# Lancer la génération
+if generate:
+    try:
+        df = df[df[selected_critere].notna()]
+        df = df[df["positions"].notna()]
+        df["value"] = df["value"].astype(float)
+        df[selected_critere] = df[selected_critere].astype(float)
 
-selected_critere = st.selectbox("Critère à maximiser", sorted(criteres_disponibles))
+        players = df.to_dict(orient="records")
+        prob = LpProblem("Team_Selection", LpMaximize)
+        x = LpVariable.dicts("Player", range(len(players)), 0, 1, LpBinary)
 
-# Bouton pour construire l’équipe
-if st.button("Construire l’équipe"):
-    st.subheader("Résultat du solver")
+        # Contraintes de budget
+        prob += lpSum([x[i] * players[i]["value"] for i in range(len(players))]) <= budget
 
-    selected_df = df[["name", "positions", "value", selected_critere]].copy()
-    selected_df = selected_df.dropna(subset=[selected_critere])
-    
-    # Poste principal uniquement
-    selected_df["main_pos"] = selected_df["positions"].apply(lambda x: x.split(",")[0] if isinstance(x, str) else "Unknown")
-    pos_map = {
-        "GK": "GK",
-        "CB": "DF", "LB": "DF", "RB": "DF", "LWB": "DF", "RWB": "DF", "RCB": "DF", "LCB": "DF",
-        "CM": "MF", "CAM": "MF", "CDM": "MF", "LM": "MF", "RM": "MF", "LCM": "MF", "RCM": "MF",
-        "ST": "FW", "CF": "FW", "LF": "FW", "RF": "FW", "RW": "FW", "LW": "FW"
-    }
-    selected_df["pos_group"] = selected_df["main_pos"].map(pos_map)
-    selected_df = selected_df[selected_df["pos_group"].isin(["GK", "DF", "MF", "FW"])]
-    
-    # Optimisation avec PuLP
-    model = LpProblem("Team_Selection", LpMaximize)
-    players = selected_df.index
-    choices = LpVariable.dicts("Player", players, cat=LpBinary)
+        # Contraintes de nombre de joueurs par poste
+        for pos, required in structure.items():
+            prob += lpSum([x[i] for i in range(len(players)) if pos in players[i]["positions"]]) >= required
 
-    # Objectif : maximiser la somme pondérée du critère choisi
-    model += lpSum([choices[i] * selected_df.loc[i, selected_critere] for i in players])
+        # Contraintes : 11 joueurs au total
+        prob += lpSum([x[i] for i in range(len(players))]) == 11
 
-    # Contraintes de poste
-    formation = formations[formation_choice]
-    for pos in formation:
-        model += lpSum([choices[i] for i in players if selected_df.loc[i, "pos_group"] == pos]) == formation[pos]
+        # Objectif : maximiser la somme des critères
+        prob += lpSum([x[i] * players[i][selected_critere] for i in range(len(players))])
 
-    # Contrainte de budget
-    model += lpSum([choices[i] * selected_df.loc[i, "value"] for i in players]) <= budget
+        # Résolution
+        prob.solve()
 
-    # Résolution
-    model.solve()
+        selected_players = [players[i] for i in range(len(players)) if x[i].varValue == 1]
 
-    selected_players = selected_df[[choices[i].varValue == 1 for i in players]]
-
-    if not selected_players.empty:
-        st.success(f"Équipe générée avec succès ! Critère maximisé : `{selected_critere}`")
-        st.write(selected_players[["name", "main_pos", "value", selected_critere]].reset_index(drop=True))
-        total_value = selected_players["value"].sum()
-        total_score = selected_players[selected_critere].sum()
-        st.markdown(f"**Total du budget utilisé :** {total_value/1_000_000:.1f} M€")
-        st.markdown(f"**Total du critère `{selected_critere}` :** {total_score:.2f}")
-    else:
-        st.error("Aucune équipe valide n’a pu être générée avec les contraintes actuelles.")
+        if selected_players:
+            result_df = pd.DataFrame(selected_players)
+            st.success("✅ Équipe générée avec succès !")
+            st.dataframe(result_df[["name", "positions", "value", selected_critere]])
+        else:
+            st.error("Aucune équipe valide trouvée avec ces contraintes. Essaie d'augmenter le budget ou de choisir un autre critère.")
+    except Exception as e:
+        st.exception(f"Erreur pendant la génération : {e}") 

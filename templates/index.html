@@ -7,64 +7,61 @@
 </head>
 <body class="bg-light">
   <div class="container py-5">
-    <h1 class="mb-4 text-center">FC25 - Générateur d'équipe</h1>
-
-    <form method="POST" class="card p-4 shadow-sm">
-      <div class="row mb-3">
-        <div class="col-md-4">
-          <label class="form-label">Budget (en millions €)</label>
-          <input type="number" name="budget" class="form-control" placeholder="ex: 500" required>
-        </div>
-        <div class="col-md-4">
-          <label class="form-label">Critère de sélection</label>
-          <select name="criterion" class="form-select" required>
-            {% for col in criteria %}
-              <option value="{{ col }}">{{ col }}</option>
-            {% endfor %}
-          </select>
-        </div>
-        <div class="col-md-4">
-          <label class="form-label">Formation</label>
-          <select name="formation" class="form-select" required>
-            {% for f in formations %}
-              <option value="{{ f }}">{{ f }}</option>
-            {% endfor %}
-          </select>
-        </div>
+    <h2 class="text-center mb-4">FC25 – Générateur d'équipe</h2>
+    <form method="POST" action="/build_team" class="row g-3 justify-content-center">
+      <div class="col-md-3">
+        <label class="form-label">Budget (en millions €)</label>
+        <input type="number" class="form-control" name="budget" required placeholder="Ex: 500">
       </div>
-      <button type="submit" class="btn btn-primary">Construire l'équipe</button>
+      <div class="col-md-3">
+        <label class="form-label">Critère de sélection</label>
+        <select class="form-select" name="criterion" required>
+          <option value="" disabled selected hidden>Sélectionner un critère</option>
+          {% for col in numeric_columns %}
+            <option value="{{ col }}">{{ col }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Formation</label>
+        <select class="form-select" name="formation" required>
+          {% for formation in formations.keys() %}
+            <option value="{{ formation }}">{{ formation }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-12 text-center mt-3">
+        <button type="submit" class="btn btn-primary">Construire l'équipe</button>
+      </div>
     </form>
 
-    {% if results %}
-      <div class="mt-5">
-        <h3>Composition optimale :</h3>
-        <table class="table table-bordered table-hover mt-3">
-          <thead class="table-dark">
+    {% if team is not none %}
+      <hr class="my-4">
+      <h4 class="text-center">Équipe optimisée</h4>
+      <table class="table table-bordered mt-3">
+        <thead class="table-light">
+          <tr>
+            <th>Nom</th>
+            <th>Club</th>
+            <th>Postes</th>
+            <th>Rôle</th>
+            <th>Valeur (€)</th>
+            <th>Critère</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for _, row in team.iterrows() %}
             <tr>
-              <th>Nom</th>
-              <th>Poste</th>
-              <th>Valeur (€)</th>
-              <th>Critère choisi</th>
+              <td>{{ row["name"] }}</td>
+              <td>{{ row["club_name"] }}</td>
+              <td>{{ row["positions"] }}</td>
+              <td>{{ row["poste_simplifie"] }}</td>
+              <td>{{ "{:,.0f}".format(row["value"] / 1e6) }} M€</td>
+              <td>{{ row[criterion] }}</td>
             </tr>
-          </thead>
-          <tbody>
-            {% for player in results %}
-              <tr>
-                <td>{{ player.name }}</td>
-                <td>{{ player.positions }}</td>
-                <td>{{ "{:.0f}".format(player.value) }}</td>
-                <td>
-                  {% for key, value in player.items() %}
-                    {% if key not in ['name', 'positions', 'value'] %}
-                      {{ key }}: {{ value }}
-                    {% endif %}
-                  {% endfor %}
-                </td>
-              </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
+          {% endfor %}
+        </tbody>
+      </table>
     {% endif %}
   </div>
 </body>

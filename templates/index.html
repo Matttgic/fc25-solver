@@ -3,57 +3,71 @@
 <head>
     <meta charset="UTF-8">
     <title>FC25 - Générateur d'équipe</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
 </head>
-<body>
-    <h1>⚽ FC25 - Générateur d'équipe optimal</h1>
-
-    <form method="post">
-        <label for="critere">Critère à maximiser :</label>
-        <select name="critere" id="critere" required>
-            {% for crit in criteres %}
-                <option value="{{ crit }}" {% if crit == selected_critere %}selected{% endif %}>{{ crit }}</option>
-            {% endfor %}
-        </select>
-
-        <label for="budget">Budget (en millions €) :</label>
-        <input type="number" name="budget" id="budget" placeholder="ex: 500" required>
-
-        <label for="formation">Formation :</label>
-        <select name="formation" id="formation">
-            {% for formation in formations %}
-                <option value="{{ formation }}">{{ formation }}</option>
-            {% endfor %}
-        </select>
-
-        <button type="submit">Construire l’équipe</button>
+<body class="bg-light">
+<div class="container mt-5">
+    <h1 class="mb-4 text-center">⚽ Générateur d'équipe FC25</h1>
+    <form method="POST" class="card p-4 shadow-sm">
+        <div class="row mb-3">
+            <div class="col-md-4">
+                <label for="formation" class="form-label">Formation</label>
+                <select class="form-select" id="formation" name="formation" required>
+                    {% for key, value in formations.items() %}
+                        <option value="{{ key }}" {% if selected_formation == key %}selected{% endif %}>{{ key }} : {{ value|join(', ') }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label for="critere" class="form-label">Critère de sélection</label>
+                <select class="form-select" id="critere" name="critere" required>
+                    {% for critere in criteres %}
+                        <option value="{{ critere }}" {% if selected_critere == critere %}selected{% endif %}>{{ critere }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label for="budget" class="form-label">Budget (en millions €)</label>
+                <input type="number" class="form-control" id="budget" name="budget" min="1" max="10000" value="{{ budget or '' }}" required>
+            </div>
+        </div>
+        <div class="d-grid">
+            <button type="submit" class="btn btn-primary">Construire l'équipe</button>
+        </div>
     </form>
 
     {% if equipe %}
-        <h2>Équipe générée (critère : {{ selected_critere }})</h2>
-        <table border="1">
-            <thead>
-                <tr>
-                    <th>Nom</th>
-                    <th>Poste</th>
-                    <th>Valeur (€)</th>
-                    <th>Club</th>
-                    <th>Nationalité</th>
-                    <th>{{ selected_critere }}</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for joueur in equipe %}
+        <div class="card mt-5 p-4 shadow-sm">
+            <h3 class="mb-4 text-center">🧠 Équipe générée</h3>
+            <table class="table table-striped">
+                <thead>
                     <tr>
-                        <td>{{ joueur["name"] }}</td>
-                        <td>{{ joueur["role"] }}</td>
-                        <td>{{ '{:,.0f}'.format(joueur["value"]) }}</td>
-                        <td>{{ joueur["club_name"] }}</td>
-                        <td>{{ joueur["country_name"] }}</td>
-                        <td>{{ joueur[selected_critere] }}</td>
+                        <th>Nom</th>
+                        <th>Poste</th>
+                        <th>Club</th>
+                        <th>Note</th>
+                        <th>Valeur (€M)</th>
+                        <th>Critère choisi</th>
                     </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+                </thead>
+                <tbody>
+                    {% for joueur in equipe %}
+                        <tr>
+                            <td>{{ joueur['name'] }}</td>
+                            <td>{{ joueur['position'] }}</td>
+                            <td>{{ joueur['club_name'] }}</td>
+                            <td>{{ joueur['overall_rating'] }}</td>
+                            <td>{{ "%.2f"|format(joueur['estimated_value']) }}</td>
+                            <td>{{ joueur[selected_critere] }}</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            <div class="text-end fw-bold">
+                Total dépensé : {{ total_value|round(2) }} M€
+            </div>
+        </div>
     {% endif %}
+</div>
 </body>
 </html>

@@ -1,51 +1,28 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="fr">
 <head>
     <meta charset="UTF-8">
-    <title>FC25 Team Builder</title>
+    <title>FC25 - Sélection d’équipe</title>
 </head>
 <body>
-    <h1>FC25 - Team Optimizer</h1>
+    <h1>Générateur d'équipe</h1>
     <form method="post">
-        <label>Budget (en millions d'euros):</label>
-        <input type="number" name="budget" step="0.1" value="500" /><br><br>
-
-        <label>Formation:</label>
-        <select name="formation">
-            {% for f in formations %}
-                <option value="{{ f }}">{{ f }}</option>
+        <label for="formation">Choisir une formation :</label>
+        <select name="formation" id="formation">
+            {% for form in formations %}
+                <option value="{{ form }}" {% if form == selected_formation %}selected{% endif %}>
+                    {{ form }}
+                </option>
             {% endfor %}
-        </select><br><br>
-
-        <h3>Critères à maximiser :</h3>
-        {% for c in criteria %}
-            <input type="checkbox" name="criteria" value="{{ c }}"> {{ c }}<br>
-        {% endfor %}<br>
-
-        <h3>Filtres personnalisés (ex: pays, club, taille, etc) :</h3>
-        {% for c in criteria %}
-            <label>{{ c }} :</label>
-            <input type="text" name="{{ c }}"><br>
-        {% endfor %}<br>
-
-        <input type="submit" value="Construire l'équipe">
+        </select>
+        <button type="submit">Générer</button>
     </form>
 
-    {% if result %}
-        <h2>Equipe sélectionnée</h2>
-        <table border="1">
-            <tr>
-                <th>Nom</th><th>Poste</th><th>Valeur</th><th>Score</th>
-            </tr>
-            {% for p in result %}
-            <tr>
-                <td>{{ p['name'] }}</td>
-                <td>{{ p['main_position'] }}</td>
-                <td>{{ "{:,}".format(p['value']) }}</td>
-                <td>{{ "{:.2f}".format(p['selected_criteria_sum']) }}</td>
-            </tr>
-            {% endfor %}
-        </table>
-    {% endif %}
+    <h2>Équipe : {{ selected_formation }}</h2>
+    <ul>
+        {% for player in team %}
+            <li><strong>{{ player.name }}</strong> ({{ player.positions }}) – Note : {{ player.overall_rating }}</li>
+        {% endfor %}
+    </ul>
 </body>
 </html>

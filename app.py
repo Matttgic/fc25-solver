@@ -1,95 +1,74 @@
-from flask import Flask, render_template, request
-import pandas as pd
-from pulp import LpProblem, LpMaximize, LpVariable, lpSum, LpBinary
+from flask import Flask, render_template, request import pandas as pd from pulp import LpProblem, LpVariable, lpSum, LpMaximize, LpBinary
 
-app = Flask(__name__)
+app = Flask(name)
 
-# Charger les données
-DATA_PATH = "player-data-full-2025-june.csv"
-df = pd.read_csv(DATA_PATH, low_memory=False)
+=== Chargement des données ===
 
-# Nettoyage de base
-df = df.dropna(subset=["positions", "name"])
-df["positions"] = df["positions"].apply(lambda x: x.split(",")[0] if isinstance(x, str) else "UNK")
+DATA_PATH = "player-data-full-2025-june.csv" df = pd.read_csv(DATA_PATH)
 
-# Colonnes numériques disponibles pour optimiser
-numeric_criteria = df.select_dtypes(include=["number"]).columns.tolist()
-default_critere = "sprint_speed" if "sprint_speed" in numeric_criteria else numeric_criteria[0]
+Nettoyage de base
 
-# Toutes les formations possibles
-formations = {
-    "4-4-2": {"GK": 1, "DF": 4, "MF": 4, "FW": 2},
-    "4-3-3": {"GK": 1, "DF": 4, "MF": 3, "FW": 3},
-    "3-4-3": {"GK": 1, "DF": 3, "MF": 4, "FW": 3},
-    "5-3-2": {"GK": 1, "DF": 5, "MF": 3, "FW": 2},
-    "3-5-2": {"GK": 1, "DF": 3, "MF": 5, "FW": 2},
-    "5-4-1": {"GK": 1, "DF": 5, "MF": 4, "FW": 1},
-    "4-5-1": {"GK": 1, "DF": 4, "MF": 5, "FW": 1},
-}
+if "positions" in df.columns: df["positions"] = df["positions"].astype(str).str.split(',')
 
-# Fonction pour associer un poste principal simplifié
-def simplifie_poste(row):
-    if "GK" in row["positions"]:
-        return "GK"
-    elif "DF" in row["positions"]:
-        return "DF"
-    elif "MF" in row["positions"]:
-        return "MF"
-    elif "FW" in row["positions"]:
-        return "FW"
-    return "UNK"
+Ne garder que les joueurs avec un nom et une position
 
-df["poste"] = df.apply(simplifie_poste, axis=1)
-df["value"] = pd.to_numeric(df["value"], errors="coerce")
+if "position" in df.columns: df = df.dropna(subset=["position", "name"])
 
-@app.route("/", methods=["GET", "POST"])
-def index():
-    equipe = []
-    selected_critere = default_critere
-    selected_formation = "4-4-2"
-    budget = 500_000_000  # budget par défaut : 500M
+=== Formations disponibles ===
 
-    if request.method == "POST":
-        try:
-            selected_critere = request.form.get("critere", default_critere)
-            selected_formation = request.form.get("formation", "4-4-2")
-            budget = int(float(request.form.get("budget", "500")) * 1_000_000)
+formations_dict = { "4-4-2": {"GK": 1, "DF": 4, "MF": 4, "FW": 2}, "3-4-3": {"GK": 1, "DF": 3, "MF": 4, "FW": 3}, "4-3-3": {"GK": 1, "DF": 4, "MF": 3, "FW": 3}, "5-4-1": {"GK": 1, "DF": 5, "MF": 4, "FW": 1}, "3-5-2": {"GK": 1, "DF": 3, "MF": 5, "FW": 2}, "4-5-1": {"GK": 1, "DF": 4, "MF": 5, "FW": 1}, "5-3-2": {"GK": 1, "DF": 5, "MF": 3, "FW": 2}, "4-2-3-1": {"GK": 1, "DF": 4, "MF": 5, "FW": 1}, "3-2-3-2": {"GK": 1, "DF": 3, "MF": 5, "FW": 2}, } formations = list(formations_dict.keys())
 
-            poste_structure = formations.get(selected_formation, formations["4-4-2"])
+=== Colonnes numériques sélectionnables ===
 
-            # Filtrer uniquement les joueurs valides pour le critère choisi
-            df_valid = df.dropna(subset=[selected_critere, "value"])
+numeric_criteria = df.select_dtypes(include='number').columns.tolist()
 
-            # Variables de décision
-            joueurs = df_valid.index.tolist()
-            x = LpVariable.dicts("x", joueurs, cat=LpBinary)
+@app.route('/', methods=['GET', 'POST']) def index(): selected_critere = request.form.get("critere") budget = float(request.form.get("budget", 100)) selected_formation = request.form.get("formation", "4-4-2")
 
-            prob = LpProblem("TeamSelection", LpMaximize)
+if request.method == 'POST' and selected_critere:
+    try:
+        formation = formations_dict[selected_formation]
+        result = solve_team(df, budget, selected_critere, formation)
+        return render_template("index.html", criteres=numeric_criteria,
+                               formations=formations,
+                               equipe=result,
+                               selected_critere=selected_critere,
+                               selected_formation=selected_formation,
+                               budget=budget)
+    except Exception as e:
+        return f"Erreur dans le solver : {str(e)}"
 
-            # Objectif : maximiser le score du critère
-            prob += lpSum(df_valid.loc[i, selected_critere] * x[i] for i in joueurs)
+return render_template("index.html",
+                       criteres=numeric_criteria,
+                       formations=formations,
+                       equipe=None,
+                       selected_critere=None,
+                       selected_formation="4-4-2",
+                       budget=100)
 
-            # Contraintes par poste
-            for poste, nb in poste_structure.items():
-                prob += lpSum(x[i] for i in joueurs if df_valid.loc[i, "poste"] == poste) == nb
+def solve_team(df, budget, critere, formation): df_filtered = df.dropna(subset=[critere, "positions", "value", "name"]) players = df_filtered.copy()
 
-            # Contraintes de budget
-            prob += lpSum(df_valid.loc[i, "value"] * x[i] for i in joueurs) <= budget
+# Initialisation du problème
+prob = LpProblem("Team_Selection", LpMaximize)
 
-            prob.solve()
+x = LpVariable.dicts("player", players.index, cat=LpBinary)
 
-            equipe = df_valid.loc[[i for i in joueurs if x[i].varValue == 1]].to_dict(orient="records")
-        except Exception as e:
-            print(f"Erreur : {e}")
-            equipe = []
+# Objectif : maximiser le critère choisi
+prob += lpSum([x[i] * players.loc[i, critere] for i in players.index])
 
-    return render_template("index.html",
-                           criteres=numeric_criteria,
-                           formations=list(formations.keys()),
-                           equipe=equipe,
-                           selected_critere=selected_critere,
-                           selected_formation=selected_formation,
-                           budget=budget // 1_000_000)
+# Contraintes de formation (par position)
+for pos, count in formation.items():
+    prob += lpSum([x[i] for i in players.index if pos in players.loc[i, "positions"]]) == count
 
-if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=5000)
+# Budget en millions d’euros
+prob += lpSum([x[i] * players.loc[i, "value"] for i in players.index]) <= budget
+
+# Une seule fois chaque joueur
+prob += lpSum([x[i] for i in players.index]) == sum(formation.values())
+
+prob.solve()
+
+selected = players.loc[[i for i in players.index if x[i].varValue == 1]]
+return selected.to_dict(orient="records")
+
+if name == 'main': app.run(debug=True, port=5000, host="0.0.0.0")
+

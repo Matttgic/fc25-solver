@@ -484,7 +484,7 @@ def get_card_color(overall):
 
 def generate_export_data(selected_players, team_stats, formation):
     """Génère les données d'export - VERSION CORRIGÉE"""
-
+    
     # Fonction helper pour convertir les types numpy/pandas en types Python natifs
     def convert_to_serializable(obj):
         if isinstance(obj, (np.integer, np.int64)):
@@ -497,18 +497,18 @@ def generate_export_data(selected_players, team_stats, formation):
             return None
         else:
             return obj
-
+    
     export_data = {
         "formation": formation,
         "team_stats": {},
         "players": [],
         "export_date": datetime.now().isoformat()
     }
-
+    
     # Conversion des stats d'équipe
     for key, value in team_stats.items():
         export_data["team_stats"][key] = convert_to_serializable(value)
-
+    
     # Conversion des données joueurs
     for p in selected_players:
         player = p['player']
@@ -523,7 +523,7 @@ def generate_export_data(selected_players, team_stats, formation):
             "value": convert_to_serializable(p['cost'])
         }
         export_data["players"].append(player_data)
-
+    
     return export_data
 
 def main():
@@ -935,18 +935,31 @@ def main():
                     with col_exp1:
                         st.markdown("#### 📊 **Export CSV**")
                         
+                        # VERSION CORRIGÉE avec conversion sécurisée
                         csv_data = []
                         for p in team:
                             player = p['player']
+                            
+                            # Fonction de conversion sécurisée
+                            def safe_convert(value, default='N/A'):
+                                if pd.isna(value):
+                                    return default
+                                if isinstance(value, (np.integer, np.int64)):
+                                    return int(value)
+                                elif isinstance(value, (np.floating, np.float64)):
+                                    return float(value)
+                                else:
+                                    return str(value)
+                            
                             csv_data.append({
-                                'Nom': player['name'],
-                                'Position': p['position'],
-                                'Overall': player['overall_rating'],
-                                'Potentiel': player.get('potential', ''),
-                                'Age': player.get('age', ''),
-                                'Nationalité': player.get('nationality', ''),
-                                'Club': player.get('club_name', ''),
-                                'Valeur_Millions': p['cost'],
+                                'Nom': safe_convert(player['name'], 'Unknown'),
+                                'Position': safe_convert(p['position']),
+                                'Overall': safe_convert(player['overall_rating'], 0),
+                                'Potentiel': safe_convert(player.get('potential'), 0),
+                                'Age': safe_convert(player.get('age'), 0),
+                                'Nationalité': safe_convert(player.get('nationality'), 'Unknown'),
+                                'Club': safe_convert(player.get('club_name'), 'Unknown'),
+                                'Valeur_Millions': safe_convert(p['cost'], 0),
                                 'Formation': formation
                             })
                         
@@ -1044,11 +1057,8 @@ def main():
                 col_info1, col_info2, col_info3 = st.columns(3)
                 with col_info1:
                     st.metric("⭐ Overall max", int(df['overall_rating'].max()))
-                with col_info2:
-    if 'nationality' in df.columns:
-        st.metric("🌍 Nationalités", len(df['nationality'].dropna().unique()))
-    else:
-        st.metric("🌍 Nationalités", "N/A")
+                with col_info2: 
+                    st.metric("🌍 Nationalités", len(df['nationality'].unique()))
                 with col_info3:
                     st.metric("🏆 Ligues", len(df.get('league_name', pd.Series()).unique()))
                 
@@ -1058,4 +1068,4 @@ def main():
                     st.write("**Colonnes disponibles:**", list(df.columns))
 
 if __name__ == "__main__":
-    main() 
+    main()

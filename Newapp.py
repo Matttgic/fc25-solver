@@ -935,20 +935,33 @@ def main():
                     with col_exp1:
                         st.markdown("#### 📊 **Export CSV**")
                         
-                        csv_data = []
-                        for p in team:
-                            player = p['player']
-                            csv_data.append({
-                                'Nom': player['name'],
-                                'Position': p['position'],
-                                'Overall': player['overall_rating'],
-                                'Potentiel': player.get('potential', ''),
-                                'Age': player.get('age', ''),
-                                'Nationalité': player.get('nationality', ''),
-                                'Club': player.get('club_name', ''),
-                                'Valeur_Millions': p['cost'],
-                                'Formation': formation
-                            })
+                        # Dans l'onglet Export, section CSV - REMPLACEZ le bloc csv_data par :
+csv_data = []
+for p in team:
+    player = p['player']
+    
+    # Fonction de conversion sécurisée
+    def safe_convert(value, default='N/A'):
+        if pd.isna(value):
+            return default
+        if isinstance(value, (np.integer, np.int64)):
+            return int(value)
+        elif isinstance(value, (np.floating, np.float64)):
+            return float(value)
+        else:
+            return str(value)
+    
+    csv_data.append({
+        'Nom': safe_convert(player['name'], 'Unknown'),
+        'Position': safe_convert(p['position']),
+        'Overall': safe_convert(player['overall_rating'], 0),
+        'Potentiel': safe_convert(player.get('potential'), 0),
+        'Age': safe_convert(player.get('age'), 0),
+        'Nationalité': safe_convert(player.get('nationality'), 'Unknown'),
+        'Club': safe_convert(player.get('club_name'), 'Unknown'),
+        'Valeur_Millions': safe_convert(p['cost'], 0),
+        'Formation': formation
+    })
                         
                         csv_df = pd.DataFrame(csv_data)
                         csv_string = csv_df.to_csv(index=False)

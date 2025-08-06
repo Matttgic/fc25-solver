@@ -483,24 +483,44 @@ def get_card_color(overall):
     else: return "linear-gradient(135deg, #666, #444)"  # Gris
 
 def generate_export_data(selected_players, team_stats, formation):
-    """Génère les données d'export"""
+    """Génère les données d'export - VERSION CORRIGÉE"""
+    
+    # Fonction helper pour convertir les types numpy/pandas en types Python natifs
+    def convert_to_serializable(obj):
+        if isinstance(obj, (np.integer, np.int64)):
+            return int(obj)
+        elif isinstance(obj, (np.floating, np.float64)):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        elif pd.isna(obj):
+            return None
+        else:
+            return obj
+    
     export_data = {
         "formation": formation,
-        "team_stats": team_stats,
+        "team_stats": {},
         "players": [],
         "export_date": datetime.now().isoformat()
     }
     
+    # Conversion des stats d'équipe
+    for key, value in team_stats.items():
+        export_data["team_stats"][key] = convert_to_serializable(value)
+    
+    # Conversion des données joueurs
     for p in selected_players:
+        player = p['player']
         player_data = {
-            "name": p['player']['name'],
-            "position": p['position'],
-            "overall": p['player']['overall_rating'],
-            "potential": p['player'].get('potential', 0),
-            "age": p['player'].get('age', 0),
-            "nationality": p['player'].get('nationality', ''),
-            "club": p['player'].get('club_name', ''),
-            "value": p['cost']
+            "name": str(player['name']) if not pd.isna(player['name']) else "Unknown",
+            "position": str(p['position']),
+            "overall": convert_to_serializable(player['overall_rating']),
+            "potential": convert_to_serializable(player.get('potential', 0)),
+            "age": convert_to_serializable(player.get('age', 0)),
+            "nationality": str(player.get('nationality', '')) if not pd.isna(player.get('nationality')) else "Unknown",
+            "club": str(player.get('club_name', '')) if not pd.isna(player.get('club_name')) else "Unknown",
+            "value": convert_to_serializable(p['cost'])
         }
         export_data["players"].append(player_data)
     

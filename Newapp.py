@@ -635,4 +635,404 @@ def main():
                             st.metric("💰 Coût", f"€{sum(p['cost'] for p in team):.0f}M", 
                                     f"€{st.session_state['remaining_budget']:.0f}M restant")
                         with col_m2:
-                            st.metric("⭐ Overall", f"{team_stats['overall']
+                            st.metric("⭐ Overall", f"{team_stats['overall']:.1f}", 
+                                    f"{team_stats['potential']:.1f} pot.")
+                        with col_m3:
+                            st.metric("🧪 Chimie", f"{team_stats['chemistry']:.0f}%", 
+                                    f"{team_stats['age']:.1f} ans moy.")
+                        with col_m4:
+                            st.metric("⚔️ Attaque", f"{team_stats['attack']:.0f}", 
+                                    f"{team_stats['defense']:.0f} déf.")
+                        
+                        # Graphique radar des stats
+                        fig_radar = go.Figure()
+                        
+                        categories = ['Attaque', 'Défense', 'Créativité', 'Chimie', 'Expérience']
+                        values = [
+                            team_stats['attack'],
+                            team_stats['defense'], 
+                            team_stats['creativity'],
+                            team_stats['chemistry'],
+                            team_stats['experience']
+                        ]
+                        
+                        fig_radar.add_trace(go.Scatterpolar(
+                            r=values,
+                            theta=categories,
+                            fill='toself',
+                            name='Votre équipe',
+                            line_color='rgb(255, 107, 53)'
+                        ))
+                        
+                        fig_radar.update_layout(
+                            polar=dict(
+                                radialaxis=dict(visible=True, range=[0, 100])
+                            ),
+                            title="📈 Profil de l'équipe",
+                            height=400
+                        )
+                        
+                        st.plotly_chart(fig_radar, use_container_width=True)
+                        
+                        # Formation tactique
+                        display_advanced_formation(team, st.session_state['formation'])
+                        
+                        # Suggestions d'amélioration
+                        if st.session_state.get('suggestions'):
+                            st.markdown("### 💡 **Suggestions d'amélioration**")
+                            for suggestion in st.session_state['suggestions']:
+                                st.info(suggestion)
+            
+            with tab2:
+                if 'team' in st.session_state:
+                    team = st.session_state['team']
+                    
+                    st.markdown("### 📊 **Analytics avancées**")
+                    
+                    # Tableau détaillé
+                    team_data = []
+                    for p in team:
+                        player = p['player']
+                        team_data.append({
+                            'Position': p['position'],
+                            'Nom': player['name'],
+                            'Club': player.get('club_name', 'N/A'),
+                            'Overall': player['overall_rating'],
+                            'Potentiel': player.get('potential', 'N/A'),
+                            'Âge': player.get('age', 'N/A'),
+                            'Nationalité': player.get('nationality', 'N/A'),
+                            'Valeur €M': f"{p['cost']:.1f}",
+                            'Efficacité': f"{player.get('efficiency_score', 0):.2f}"
+                        })
+                    
+                    team_df = pd.DataFrame(team_data)
+                    st.dataframe(team_df, use_container_width=True, height=400)
+                    
+                    # Graphiques analytiques
+                    col_g1, col_g2 = st.columns(2)
+                    
+                    with col_g1:
+                        # Distribution des âges
+                        ages = [p['player'].get('age', 25) for p in team]
+                        fig_age = px.histogram(
+                            x=ages, 
+                            nbins=10, 
+                            title="📊 Distribution des âges",
+                            labels={'x': 'Âge', 'y': 'Nombre de joueurs'}
+                        )
+                        st.plotly_chart(fig_age, use_container_width=True)
+                        
+                        # Répartition par nationalité
+                        nationalities = [p['player'].get('nationality', 'Unknown') for p in team]
+                        nat_counts = pd.Series(nationalities).value_counts()
+                        
+                        fig_nat = px.pie(
+                            values=nat_counts.values, 
+                            names=nat_counts.index,
+                            title="🌍 Répartition des nationalités"
+                        )
+                        st.plotly_chart(fig_nat, use_container_width=True)
+                    
+                    with col_g2:
+                        # Overall par position
+                        positions = [p['position'] for p in team]
+                        overalls = [p['player']['overall_rating'] for p in team]
+                        
+                        fig_pos = px.bar(
+                            x=positions, 
+                            y=overalls,
+                            title="⭐ Overall par position",
+                            labels={'x': 'Position', 'y': 'Overall'}
+                        )
+                        st.plotly_chart(fig_pos, use_container_width=True)
+                        
+                        # Analyse pieds forts
+                        foot_data = {'Droitier': 7, 'Gaucher': 2, 'Ambidextre': 2}  # Exemple
+                        fig_foot = px.bar(
+                            x=list(foot_data.keys()),
+                            y=list(foot_data.values()),
+                            title="🦶 Répartition des pieds forts",
+                            color=list(foot_data.keys())
+                        )
+                        st.plotly_chart(fig_foot, use_container_width=True)
+                    
+                    # Analyse comparative
+                    st.markdown("### 📈 **Analyse comparative**")
+                    
+                    col_comp1, col_comp2, col_comp3 = st.columns(3)
+                    
+                    with col_comp1:
+                        avg_overall_league = df['overall_rating'].mean()
+                        diff_overall = team_df['Overall'].astype(float).mean() - avg_overall_league
+                        st.metric(
+                            "📊 Niveau vs moyenne", 
+                            f"{team_df['Overall'].astype(float).mean():.1f}",
+                            f"{diff_overall:+.1f} pts"
+                        )
+                    
+                    with col_comp2:
+                        avg_age_league = df['age'].mean()
+                        team_avg_age = pd.to_numeric(team_df['Âge'], errors='coerce').mean()
+                        diff_age = team_avg_age - avg_age_league
+                        st.metric(
+                            "👶 Âge vs moyenne",
+                            f"{team_avg_age:.1f} ans",
+                            f"{diff_age:+.1f} ans"
+                        )
+                    
+                    with col_comp3:
+                        total_value = sum(p['cost'] for p in team)
+                        value_per_point = total_value / team_df['Overall'].astype(float).mean()
+                        st.metric(
+                            "💰 Coût par point",
+                            f"€{value_per_point:.1f}M",
+                            "Efficacité"
+                        )
+                else:
+                    st.info("🎮 Créez d'abord une équipe dans l'onglet Constructeur !")
+            
+            with tab3:
+                st.markdown("### ⚔️ **Comparaison d'équipes**")
+                
+                # Sauvegarde d'équipes
+                if 'team' in st.session_state:
+                    team_name = st.text_input("💾 Nom de l'équipe à sauvegarder")
+                    if st.button("💾 Sauvegarder cette équipe"):
+                        if team_name:
+                            if 'saved_teams' not in st.session_state:
+                                st.session_state['saved_teams'] = {}
+                            
+                            st.session_state['saved_teams'][team_name] = {
+                                'team': st.session_state['team'],
+                                'stats': st.session_state['team_stats'],
+                                'formation': st.session_state['formation'],
+                                'mode': st.session_state['mode']
+                            }
+                            st.success(f"✅ Équipe '{team_name}' sauvegardée !")
+                        else:
+                            st.warning("⚠️ Veuillez entrer un nom pour l'équipe")
+                
+                # Affichage des équipes sauvegardées
+                if st.session_state.get('saved_teams'):
+                    st.markdown("#### 📚 **Équipes sauvegardées**")
+                    
+                    teams_to_compare = st.multiselect(
+                        "Sélectionnez les équipes à comparer",
+                        options=list(st.session_state['saved_teams'].keys()),
+                        default=list(st.session_state['saved_teams'].keys())[:2]
+                    )
+                    
+                    if len(teams_to_compare) >= 2:
+                        # Tableau de comparaison
+                        comparison_data = []
+                        
+                        for team_name in teams_to_compare:
+                            team_data = st.session_state['saved_teams'][team_name]
+                            stats = team_data['stats']
+                            
+                            comparison_data.append({
+                                'Équipe': team_name,
+                                'Formation': team_data['formation'],
+                                'Mode': team_data['mode'],
+                                'Overall': f"{stats['overall']:.1f}",
+                                'Potentiel': f"{stats['potential']:.1f}",
+                                'Âge moyen': f"{stats['age']:.1f}",
+                                'Attaque': f"{stats['attack']:.0f}",
+                                'Défense': f"{stats['defense']:.0f}",
+                                'Chimie': f"{stats['chemistry']:.0f}%",
+                                'Coût total': f"€{sum(p['cost'] for p in team_data['team']):.0f}M"
+                            })
+                        
+                        comparison_df = pd.DataFrame(comparison_data)
+                        st.dataframe(comparison_df, use_container_width=True)
+                        
+                        # Graphique comparatif radar
+                        fig_comp = go.Figure()
+                        
+                        categories = ['Overall', 'Attaque', 'Défense', 'Chimie', 'Créativité']
+                        
+                        colors = ['rgb(255, 107, 53)', 'rgb(53, 107, 255)', 'rgb(107, 255, 53)', 'rgb(255, 53, 107)']
+                        
+                        for i, team_name in enumerate(teams_to_compare[:4]):  # Max 4 équipes
+                            team_data = st.session_state['saved_teams'][team_name]
+                            stats = team_data['stats']
+                            
+                            values = [
+                                stats['overall'],
+                                stats['attack'],
+                                stats['defense'],
+                                stats['chemistry'],
+                                stats['creativity']
+                            ]
+                            
+                            fig_comp.add_trace(go.Scatterpolar(
+                                r=values,
+                                theta=categories,
+                                fill='toself',
+                                name=team_name,
+                                line_color=colors[i % len(colors)]
+                            ))
+                        
+                        fig_comp.update_layout(
+                            polar=dict(radialaxis=dict(visible=True, range=[0, 100])),
+                            title="📊 Comparaison des équipes",
+                            height=500
+                        )
+                        
+                        st.plotly_chart(fig_comp, use_container_width=True)
+                        
+                        # Recommandation
+                        if len(teams_to_compare) == 2:
+                            team1_stats = st.session_state['saved_teams'][teams_to_compare[0]]['stats']
+                            team2_stats = st.session_state['saved_teams'][teams_to_compare[1]]['stats']
+                            
+                            winner_categories = []
+                            for category in ['overall', 'attack', 'defense', 'chemistry']:
+                                if team1_stats[category] > team2_stats[category]:
+                                    winner_categories.append(f"✅ {teams_to_compare[0]} domine en {category}")
+                                elif team2_stats[category] > team1_stats[category]:
+                                    winner_categories.append(f"✅ {teams_to_compare[1]} domine en {category}")
+                            
+                            st.markdown("#### 🏆 **Analyse comparative**")
+                            for category in winner_categories:
+                                st.write(category)
+                else:
+                    st.info("💾 Sauvegardez d'abord des équipes pour les comparer !")
+            
+            with tab4:
+                st.markdown("### 📤 **Export et partage**")
+                
+                if 'team' in st.session_state:
+                    team = st.session_state['team']
+                    team_stats = st.session_state['team_stats']
+                    formation = st.session_state['formation']
+                    
+                    # Export CSV
+                    export_data = generate_export_data(team, team_stats, formation)
+                    
+                    col_exp1, col_exp2 = st.columns(2)
+                    
+                    with col_exp1:
+                        st.markdown("#### 📊 **Export CSV**")
+                        
+                        csv_data = []
+                        for p in team:
+                            player = p['player']
+                            csv_data.append({
+                                'Nom': player['name'],
+                                'Position': p['position'],
+                                'Overall': player['overall_rating'],
+                                'Potentiel': player.get('potential', ''),
+                                'Age': player.get('age', ''),
+                                'Nationalité': player.get('nationality', ''),
+                                'Club': player.get('club_name', ''),
+                                'Valeur_Millions': p['cost'],
+                                'Formation': formation
+                            })
+                        
+                        csv_df = pd.DataFrame(csv_data)
+                        csv_string = csv_df.to_csv(index=False)
+                        
+                        st.download_button(
+                            label="📥 Télécharger CSV",
+                            data=csv_string,
+                            file_name=f"equipe_fc25_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                            mime="text/csv"
+                        )
+                    
+                    with col_exp2:
+                        st.markdown("#### 📋 **Export JSON**")
+                        
+                        json_string = json.dumps(export_data, indent=2, ensure_ascii=False)
+                        
+                        st.download_button(
+                            label="📥 Télécharger JSON",
+                            data=json_string,
+                            file_name=f"equipe_fc25_{datetime.now().strftime('%Y%m%d_%H%M')}.json",
+                            mime="application/json"
+                        )
+                    
+                    # Résumé pour partage
+                    st.markdown("#### 🔗 **Résumé pour partage**")
+                    
+                    share_text = f"""
+🏆 **MON ÉQUIPE FC25 ULTIMATE**
+
+📋 **Formation:** {formation}
+🎮 **Mode:** {st.session_state.get('mode', 'Standard')}
+💰 **Budget utilisé:** €{sum(p['cost'] for p in team):.0f}M
+
+📊 **Statistiques:**
+⭐ Overall moyen: {team_stats['overall']:.1f}
+⚔️ Attaque: {team_stats['attack']:.0f}/100
+🛡️ Défense: {team_stats['defense']:.0f}/100
+🧪 Chimie: {team_stats['chemistry']:.0f}%
+
+👥 **Titulaires:**
+"""
+                    
+                    for p in team:
+                        share_text += f"• {p['position']}: {p['player']['name']} ({p['player']['overall_rating']} OVR)\n"
+                    
+                    share_text += f"\n🔧 **Créé avec FC25 Ultimate Team Builder Pro**"
+                    
+                    st.text_area(
+                        "Copier pour partager sur les réseaux sociaux:",
+                        share_text,
+                        height=300
+                    )
+                    
+                    # Statistiques détaillées
+                    st.markdown("#### 📈 **Rapport détaillé**")
+                    
+                    with st.expander("📊 Voir le rapport complet"):
+                        st.markdown(f"""
+**RAPPORT D'ANALYSE D'ÉQUIPE**
+
+**Configuration:**
+- Formation: {formation}
+- Mode de jeu: {st.session_state.get('mode', 'Standard')}  
+- Budget total: €{st.session_state.get('total_budget', 0):.0f}M
+- Budget utilisé: €{sum(p['cost'] for p in team):.0f}M
+- Budget restant: €{st.session_state.get('remaining_budget', 0):.0f}M
+
+**Statistiques d'équipe:**
+- Overall moyen: {team_stats['overall']:.2f}
+- Potentiel moyen: {team_stats['potential']:.2f}
+- Âge moyen: {team_stats['age']:.1f} ans
+- Puissance offensive: {team_stats['attack']:.0f}/100
+- Solidité défensive: {team_stats['defense']:.0f}/100
+- Chimie d'équipe: {team_stats['chemistry']:.0f}%
+- Créativité: {team_stats['creativity']:.0f}/100
+- Expérience: {team_stats['experience']:.0f}/100
+
+**Répartition budgétaire:**
+- Coût moyen par joueur: €{sum(p['cost'] for p in team)/len(team):.1f}M
+- Joueur le plus cher: €{max(p['cost'] for p in team):.1f}M
+- Efficacité (Overall/€): {team_stats['overall']/(sum(p['cost'] for p in team)/len(team)):.2f}
+
+**Analyse:**
+{chr(10).join(st.session_state.get('suggestions', ['Équipe bien équilibrée !']))}
+                        """)
+                else:
+                    st.info("🎮 Créez d'abord une équipe pour l'exporter !")
+            
+            # Aperçu des données
+            with st.expander("👀 **Base de données - Aperçu**"):
+                st.markdown(f"**📊 {len(df):,} joueurs dans la base**")
+                
+                col_info1, col_info2, col_info3 = st.columns(3)
+                with col_info1:
+                    st.metric("⭐ Overall max", int(df['overall_rating'].max()))
+                with col_info2: 
+                    st.metric("🌍 Nationalités", len(df['nationality'].unique()))
+                with col_info3:
+                    st.metric("🏆 Ligues", len(df.get('league_name', pd.Series()).unique()))
+                
+                st.dataframe(df.head(10), use_container_width=True)
+                
+                if st.checkbox("🔍 Afficher toutes les colonnes"):
+                    st.write("**Colonnes disponibles:**", list(df.columns))
+
+if __name__ == "__main__":
+    main() 

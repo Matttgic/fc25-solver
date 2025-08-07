@@ -9,7 +9,7 @@ import json
 # Configuration
 st.set_page_config(page_title="FC25 Team Builder Pro", page_icon="⚽", layout="wide")
 
-# CSS simplifié
+# CSS simplifié + style pour le selectbox
 st.markdown("""
 <style>
 .main-header {
@@ -28,6 +28,9 @@ st.markdown("""
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     color: white;
     font-size: 0.8rem;
+}
+.stSelectbox > div > div > select {
+    background-color: white;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -76,6 +79,32 @@ def load_data(uploaded_file):
     except Exception as e:
         st.error(f"❌ Erreur: {e}")
         return None
+
+@st.cache_data
+def get_player_suggestions(df, search_term=""):
+    """Retourne les suggestions de joueurs pour l'autocomplétion"""
+    if not search_term:
+        # Retourne les 100 joueurs les mieux notés par défaut
+        top_players = df.nlargest(100, 'overall_rating')
+        return [f"{name} ({overall} OVR)" 
+                for name, overall in zip(top_players['name'], top_players['overall_rating'])]
+    
+    # Filtre par nom contenant le terme de recherche
+    filtered = df[df['name'].str.contains(search_term, case=False, na=False)]
+    if filtered.empty:
+        return ["Aucun joueur trouvé..."]
+    
+    # Trie par overall décroissant et prend les 20 premiers
+    filtered = filtered.nlargest(20, 'overall_rating')
+    return [f"{name} ({overall} OVR)" 
+            for name, overall in zip(filtered['name'], filtered['overall_rating'])]
+
+def extract_player_name(selected_option):
+    """Extrait le nom du joueur de l'option sélectionnée"""
+    if not selected_option or selected_option == "Aucun joueur trouvé...":
+        return ""
+    # Supprime la partie " (XX OVR)" à la fin
+    return selected_option.split(' (')[0]
 
 def can_play_position(player_positions, required_position):
     """Vérifie compatibilité position"""
@@ -330,48 +359,67 @@ def main():
             
             with tab3:
                 st.markdown("### 👥 **Joueurs similaires**")
-                st.info("💡 **Fonctionnalité :** Tapez un nom de joueur pour trouver des alternatives similaires dans votre budget (même style, âge proche, stats comparables).")
+                st.info("💡 **Fonctionnalité :** Sélectionnez un joueur dans la liste déroulante pour trouver des alternatives similaires dans votre budget (même style, âge proche, stats comparables).")
                 
                 col1, col2 = st.columns([1, 2])
                 
                 with col1:
-                    # Champ de recherche avec suggestions
-                    search_query = st.text_input("🎯 **Rechercher un joueur**", placeholder="Ex: Haaland", key="similar_search")
+                    # ✨ NOUVELLE FONCTIONNALITÉ: Menu déroulant avec suggestions
+                    st.markdown("#### 🎯 **Sélection du joueur**")
                     
-                    # Filtrer les joueurs correspondant à la recherche
-                    if search_query:
-                        matching_players = df[df['name'].str.contains(search_query, case=False, na=False)]['name'].unique()
-                        if len(matching_players) == 0:
-                            st.warning(f"❌ Aucun joueur trouvé pour '{search_query}'")
-                            matching_players = []
-                        else:
-                            st.success(f"✅ {len(matching_players)} joueur(s) trouvé(s) pour '{search_query}'")
-                    else:
-                        matching_players = []
-                    
-                    # Liste déroulante pour sélectionner un joueur
-                    selected_player = st.selectbox(
-                        "🎯 **Sélectionnez un joueur**",
-                        options=[""] + sorted(matching_players),  # Ajout d'une option vide par défaut
-                        help="Choisissez un joueur parmi les suggestions",
-                        key="similar_player_select"
+                    # Champ de recherche pour filtrer
+                    search_filter = st.text_input(
+                        "🔍 **Filtrer par nom**", 
+                        placeholder="Tapez pour filtrer la liste...",
+                        help="Commencez à taper pour réduire la liste des joueurs"
                     )
                     
-                    # Paramètres supplémentaires
-                    similar_budget = st.number_input("💰 **Budget max (€M)**", min_value=1, max_value=500, value=100)
+                    # Génère les suggestions basées sur le filtre
+                    suggestions = get_player_suggestions(df, search_filter)
+                    
+                    # Menu déroulant avec suggestions
+                    selected_player_option = st.selectbox(
+                        "👤 **Choisir le joueur**",
+                        options=suggestions,
+                        index=0,
+                        help="Sélectionnez un joueur dans la liste"
+                    )
+                    
+                    # Extraction du nom réel du joueur
+                    target_name = extract_player_name(selected_player_option)
+                    
+                    # Affichage du joueur sélectionné
+                    if target_name and target_name != "":
+                        player_info = df[df['name'].str.contains(target_name, case=False, na=False)]
+                        if not player_info.empty:
+                            player = player_info.iloc[0]
+                            st.success(f"✅ **Joueur sélectionné:** {player['name']}")
+                            
+                            # Affichage des infos du joueur
+                            col_info1, col_info2 = st.columns(2)
+                            with col_info1:
+                                st.metric("⭐ Overall", f"{player['overall_rating']}")
+                                st.metric("💰 Prix", f"€{player['value_numeric']:.1f}M")
+                            with col_info2:
+                                st.metric("👶 Âge", f"{player.get('age', 'N/A')} ans")
+                                st.metric("📍 Positions", f"{player.get('positions', 'N/A')}")
+                    
+                    st.markdown("---")
+                    
+                    # Configuration de la recherche
+                    similar_budget = st.number_input("💰 **Budget max pour alternatives (€M)**", min_value=1, max_value=500, value=100)
                     num_similar = st.slider("📊 **Nombre de résultats**", 3, 15, 5)
                     
-                    if st.button("🔍 **TROUVER SIMILAIRES**") and selected_player:
-                        similar_players = find_similar_players(df, selected_player, similar_budget, num_similar)
-                        
-                        if not similar_players.empty:
-                            st.session_state['similar_players'] = similar_players
-                            st.session_state['target_name'] = selected_player
-                            st.success(f"✅ **Joueurs similaires à {selected_player} trouvés**")
-                        else:
-                            st.warning(f"❌ Aucun joueur similaire à '{selected_player}' trouvé dans le budget")
-                    elif st.button("🔍 **TROUVER SIMILAIRES**") and not selected_player:
-                        st.warning("❌ Veuillez sélectionner un joueur dans la liste")
+                    if st.button("🔍 **TROUVER SIMILAIRES**", type="primary") and target_name:
+                        with st.spinner("🔄 Recherche en cours..."):
+                            similar_players = find_similar_players(df, target_name, similar_budget, num_similar)
+                            
+                            if not similar_players.empty:
+                                st.session_state['similar_players'] = similar_players
+                                st.session_state['target_name'] = target_name
+                                st.success("✅ **Alternatives trouvées !**")
+                            else:
+                                st.warning(f"❌ Aucun joueur similaire à '{target_name}' trouvé dans ce budget")
                 
                 with col2:
                     if 'similar_players' in st.session_state:
@@ -380,22 +428,57 @@ def main():
                         
                         st.success(f"✅ **Joueurs similaires à {target}**")
                         
-                        # Affichage résultats
+                        # Affichage résultats avec icônes et couleurs
                         display_similar = similar.copy()
                         display_similar.columns = ['Nom', 'Overall', 'Âge', 'Prix (€M)', 'Similarité %', 'Positions']
                         display_similar['Prix (€M)'] = display_similar['Prix (€M)'].round(1)
                         display_similar['Similarité %'] = display_similar['Similarité %'].round(1)
                         
-                        st.dataframe(display_similar, use_container_width=True)
+                        # Style conditionnel pour le dataframe
+                        def highlight_similarity(val):
+                            if val >= 85:
+                                return 'background-color: #d4edda; color: #155724'  # Vert
+                            elif val >= 70:
+                                return 'background-color: #fff3cd; color: #856404'  # Jaune
+                            else:
+                                return 'background-color: #f8d7da; color: #721c24'  # Rouge
                         
-                        # Graphique similarité
-                        fig_sim = px.bar(
-                            x=display_similar['Nom'][:5],
-                            y=display_similar['Similarité %'][:5],
-                            title="📊 Score de similarité (Top 5)",
-                            labels={'x': 'Joueur', 'y': 'Similarité %'}
-                        )
-                        st.plotly_chart(fig_sim, use_container_width=True)
+                        styled_df = display_similar.style.applymap(highlight_similarity, subset=['Similarité %'])
+                        st.dataframe(styled_df, use_container_width=True)
+                        
+                        # Graphiques analytiques
+                        col_g1, col_g2 = st.columns(2)
+                        
+                        with col_g1:
+                            # Graphique similarité
+                            fig_sim = px.bar(
+                                x=display_similar['Nom'][:5],
+                                y=display_similar['Similarité %'][:5],
+                                title="📊 Score de similarité (Top 5)",
+                                labels={'x': 'Joueur', 'y': 'Similarité %'},
+                                color=display_similar['Similarité %'][:5],
+                                color_continuous_scale="RdYlGn"
+                            )
+                            st.plotly_chart(fig_sim, use_container_width=True)
+                        
+                        with col_g2:
+                            # Graphique Prix vs Overall
+                            fig_scatter = px.scatter(
+                                display_similar,
+                                x='Prix (€M)',
+                                y='Overall',
+                                size='Similarité %',
+                                hover_name='Nom',
+                                title="💰 Prix vs Overall des alternatives",
+                                color='Similarité %',
+                                color_continuous_scale="RdYlGn"
+                            )
+                            st.plotly_chart(fig_scatter, use_container_width=True)
+                        
+                        # Recommandation du meilleur choix
+                        best_value = display_similar.loc[display_similar['Similarité %'].idxmax()]
+                        st.markdown("#### 🏆 **Recommandation**")
+                        st.success(f"🥇 **Meilleur choix:** {best_value['Nom']} - {best_value['Similarité %']:.0f}% de similarité pour €{best_value['Prix (€M)']}M")
             
             with tab4:
                 st.markdown("### 📊 **Analytics et export**")
@@ -418,7 +501,7 @@ def main():
                         st.info("🔍 Créez une équipe ou faites une recherche d'abord")
                         return
                     
-                    # Graph triphes
+                    # Graphiques
                     col_g1, col_g2 = st.columns(2)
                     
                     with col_g1:
@@ -507,4 +590,4 @@ def main():
         """)
 
 if __name__ == "__main__":
-    main() 
+    main()

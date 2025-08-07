@@ -28,16 +28,15 @@ FORMATIONS = {
     "3-5-2": {"GK": 1, "CB": 3, "LWB": 1, "RWB": 1, "CDM": 2, "CAM": 1, "ST": 2},
     "4-2-3-1": {"GK": 1, "CB": 2, "LB": 1, "RB": 1, "CDM": 2, "CAM": 1, "LW": 1, "RW": 1, "ST": 1},
 }
-# Liste unique de toutes les positions possibles pour les menus déroulants
 ALL_POSITIONS = sorted(list(set(pos for formation in FORMATIONS.values() for pos in formation.keys())))
-
 
 # --- Fonctions ---
 @st.cache_data
 def load_data(uploaded_file):
-    """Charge et nettoie les données de manière robuste."""
+    """Charge, nettoie et calcule les scores d'efficacité."""
     try:
         df = pd.read_csv(uploaded_file)
+        # Nettoyage de la valeur
         if 'value' in df.columns:
             value_str = df['value'].astype(str).str.replace('[€,]', '', regex=True).str.strip()
             is_million = value_str.str.endswith('M', na=False)
@@ -49,8 +48,17 @@ def load_data(uploaded_file):
         else:
             df['value_numeric'] = 0
         df['value_numeric'] = df['value_numeric'].fillna(0)
+        
+        # Calculs de base
         df['age'] = 2025 - pd.to_datetime(df['dob'], errors='coerce').dt.year
         df['score'] = df['overall_rating'] * 0.6 + df['potential'] * 0.4
+        
+        # **NOUVEAU**: Calcul des scores d'efficacité (qualité-prix)
+        # On ajoute 1 pour éviter la division par zéro avec les agents libres
+        df['overall_efficiency'] = df['overall_rating'] / (df['value_numeric'] + 1)
+        df['potential_efficiency'] = df['potential'] / (df['value_numeric'] + 1)
+        df['score_efficiency'] = df['score'] / (df['value_numeric'] + 1)
+
         df['player_id'] = df.index
         return df.dropna(subset=['name', 'overall_rating', 'age', 'positions', 'value_numeric'])
     except Exception as e:
@@ -63,7 +71,8 @@ def can_play_position(player_positions, required_position):
     return required_position in [p.strip() for p in str(player_positions).split(',')[:3]]
 
 def solve_team(df, formation, budget, criteria, filters):
-    """Utilise un solveur pour trouver la meilleure équipe."""
+    """Solveur optimisé avec une présélection basée sur l'efficacité."""
+    # 1. Filtrer les joueurs selon les critères de l'utilisateur
     initial_candidates = df.copy()
     if not filters.get('include_free_agents', True):
         initial_candidates = initial_candidates[initial_candidates['value_numeric'] > 0]
@@ -74,23 +83,26 @@ def solve_team(df, formation, budget, criteria, filters):
     if 'min_overall' in filters:
         initial_candidates = initial_candidates[initial_candidates['overall_rating'] >= filters['min_overall']]
 
+    # 2. **OPTIMISATION CLÉ**: Pour chaque poste, on sélectionne les joueurs les plus EFFICACES
     final_candidate_indices = set()
     positions_to_fill = FORMATIONS[formation]
+    efficiency_col = criteria.replace('_rating', '') + '_efficiency' # 'overall_efficiency', 'potential_efficiency', etc.
+
     for position in positions_to_fill:
         eligible_players = initial_candidates[initial_candidates['positions'].apply(lambda x: can_play_position(x, position))]
-        top_players = eligible_players.nlargest(15, criteria)
-        budget_players = eligible_players.nsmallest(15, 'value_numeric')
-        final_candidate_indices.update(top_players.index)
-        final_candidate_indices.update(budget_players.index)
+        # On prend les 40 joueurs avec le meilleur rapport qualité-prix pour ce poste
+        top_efficiency_players = eligible_players.nlargest(40, efficiency_col)
+        final_candidate_indices.update(top_efficiency_players.index)
     
     candidate_df = initial_candidates.loc[list(final_candidate_indices)]
     if candidate_df.empty: return None
 
+    # 3. Lancer le solveur sur ce pool de joueurs "intelligents"
     prob = LpProblem("TeamBuilder", LpMaximize)
     player_vars = {}
     for position, count in positions_to_fill.items():
-        eligible_players = candidate_df[candidate_df['positions'].apply(lambda x: can_play_position(x, position))]
-        for p_idx in eligible_players.index:
+        eligible_for_pos = candidate_df[candidate_df['positions'].apply(lambda x: can_play_position(x, position))]
+        for p_idx in eligible_for_pos.index:
             player_vars[(p_idx, position)] = LpVariable(f"player_{p_idx}_pos_{position}", cat=LpBinary)
 
     prob += lpSum(player_vars[(p_idx, pos)] * candidate_df.loc[p_idx, criteria] for (p_idx, pos) in player_vars), "Total_Score"
@@ -123,7 +135,6 @@ def search_players(df, num_players, position, budget_per_player, filters):
     if 'min_overall' in filters:
         candidates = candidates[candidates['overall_rating'] >= filters['min_overall']]
     
-    # Trier par le critère d'optimisation et retourner le nombre demandé
     return candidates.nlargest(num_players, filters['criteria'])
 
 # --- Application Principale ---
@@ -140,13 +151,13 @@ def main():
         # --- ONGLET 1: CONSTRUCTEUR D'ÉQUIPE ---
         with tab1:
             st.header("Constructeur d'Équipe Optimisé")
-            st.info("Le solveur trouvera la meilleure équipe de 11 joueurs en respectant vos contraintes.")
+            st.info("Le solveur trouvera l'équipe la plus équilibrée et performante en respectant vos contraintes.")
 
             col1, col2 = st.columns([1, 2])
             with col1:
                 st.subheader("Configuration")
                 formation = st.selectbox("📋 **Formation**", list(FORMATIONS.keys()), key="t1_formation")
-                budget = st.number_input("💰 **Budget total de l'équipe (M€)**", min_value=0.1, value=100.0, step=10.0, key="t1_budget")
+                budget = st.number_input("💰 **Budget total de l'équipe (M€)**", min_value=0.1, value=50.0, step=5.0, key="t1_budget")
                 criteria = st.selectbox("🎯 **Maximiser**", ["score", "overall_rating", "potential"],
                                         format_func=lambda x: {"score": "Score (Overall + Potentiel)", "overall_rating": "Overall Actuel", "potential": "Potentiel Futur"}[x], key="t1_criteria")
 
@@ -159,7 +170,7 @@ def main():
                 filters = {'age_range': age_range, 'potential_range': potential_range, 'min_overall': min_overall, 'include_free_agents': include_free_agents}
 
                 if st.button("🚀 **TROUVER LA MEILLEURE ÉQUIPE**", type="primary", use_container_width=True):
-                    with st.spinner("⚡ Optimisation en cours..."):
+                    with st.spinner("⚡ Optimisation de l'équipe en cours..."):
                         team = solve_team(df, formation, budget, criteria, filters)
                         st.session_state.team_results = team
 
@@ -223,7 +234,6 @@ def main():
                         display_df['Coût (M€)'] = display_df['Coût (M€)'].map('{:,.2f}'.format)
                         st.dataframe(display_df, use_container_width=True, hide_index=True)
                         st.download_button("📥 Télécharger en CSV", results.to_csv(index=False).encode('utf-8'), f'recherche.csv', 'text/csv')
-
 
 if __name__ == "__main__":
     main()

@@ -54,10 +54,10 @@ def load_data(uploaded_file):
         df['score'] = df['overall_rating'] * 0.6 + df['potential'] * 0.4
         
         # **NOUVEAU**: Calcul des scores d'efficacité (qualité-prix)
-        # On ajoute 1 pour éviter la division par zéro avec les agents libres
-        df['overall_efficiency'] = df['overall_rating'] / (df['value_numeric'] + 1)
-        df['potential_efficiency'] = df['potential'] / (df['value_numeric'] + 1)
-        df['score_efficiency'] = df['score'] / (df['value_numeric'] + 1)
+        # On ajoute 0.1 pour éviter la division par zéro et donner un poids aux agents libres
+        df['overall_efficiency'] = df['overall_rating'] / (df['value_numeric'] + 0.1)
+        df['potential_efficiency'] = df['potential'] / (df['value_numeric'] + 0.1)
+        df['score_efficiency'] = df['score'] / (df['value_numeric'] + 0.1)
 
         df['player_id'] = df.index
         return df.dropna(subset=['name', 'overall_rating', 'age', 'positions', 'value_numeric'])
@@ -135,7 +135,9 @@ def search_players(df, num_players, position, budget_per_player, filters):
     if 'min_overall' in filters:
         candidates = candidates[candidates['overall_rating'] >= filters['min_overall']]
     
-    return candidates.nlargest(num_players, filters['criteria'])
+    # Gérer le cas du tri par valeur (croissant)
+    ascending_order = True if filters['criteria'] == 'value_numeric' else False
+    return candidates.sort_values(by=filters['criteria'], ascending=ascending_order).head(num_players)
 
 # --- Application Principale ---
 def main():
@@ -151,7 +153,7 @@ def main():
         # --- ONGLET 1: CONSTRUCTEUR D'ÉQUIPE ---
         with tab1:
             st.header("Constructeur d'Équipe Optimisé")
-            st.info("Le solveur trouvera l'équipe la plus équilibrée et performante en respectant vos contraintes.")
+            st.info("Le solveur trouvera l'équipe la plus équilibrée et performante en se basant sur le rapport qualité-prix.")
 
             col1, col2 = st.columns([1, 2])
             with col1:
@@ -209,7 +211,7 @@ def main():
                 
                 st.subheader("Filtres & Tri")
                 criteria_search = st.selectbox("🎯 **Trier par**", ["score", "overall_rating", "potential", "value_numeric"],
-                                        format_func=lambda x: {"score": "Score (Overall + Potentiel)", "overall_rating": "Overall Actuel", "potential": "Potentiel Futur", "value_numeric": "Valeur (croissant)"}[x], key="t2_criteria")
+                                        format_func=lambda x: {"score": "Score (Overall + Potentiel)", "overall_rating": "Overall Actuel", "potential": "Potentiel Futur", "value_numeric": "Valeur (la moins chère)"}[x], key="t2_criteria")
                 age_range_search = st.slider("🎂 Âge", 16, 45, (16, 40), key="t2_age")
                 potential_range_search = st.slider("💎 **Potentiel**", 40, 99, (40, 99), key="t2_potential")
                 min_overall_search = st.slider("⭐ Overall minimum", 40, 99, 40, key="t2_overall")
@@ -233,7 +235,7 @@ def main():
                         )
                         display_df['Coût (M€)'] = display_df['Coût (M€)'].map('{:,.2f}'.format)
                         st.dataframe(display_df, use_container_width=True, hide_index=True)
-                        st.download_button("📥 Télécharger en CSV", results.to_csv(index=False).encode('utf-8'), f'recherche.csv', 'text/csv')
+                        st.download_button("📥 Télécharger en CSV", results.to_csv(index=False).encode('utf-8'), f'recherche.csv', 'text/csv', key='download_search')
 
 if __name__ == "__main__":
-    main()
+    main() 

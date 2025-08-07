@@ -65,24 +65,38 @@ def can_play_position(player_positions, required_position):
     return required_position in [p.strip() for p in str(player_positions).split(',')[:3]]
 
 def solve_team(df, formation, budget, criteria, filters):
-    """Utilise un solveur d'optimisation linéaire pour trouver la meilleure équipe."""
-    candidate_df = df.copy()
+    """
+    CORRIGÉ (Lenteur): Le solveur est maintenant beaucoup plus rapide grâce au pré-filtrage.
+    """
+    # 1. Appliquer les filtres généraux
+    initial_candidates = df.copy()
     if not filters.get('include_free_agents', True):
-        candidate_df = candidate_df[candidate_df['value_numeric'] > 0]
+        initial_candidates = initial_candidates[initial_candidates['value_numeric'] > 0]
     
     if 'age_range' in filters:
         min_age, max_age = filters['age_range']
-        candidate_df = candidate_df[candidate_df['age'].between(min_age, max_age)]
+        initial_candidates = initial_candidates[initial_candidates['age'].between(min_age, max_age)]
     if 'potential_range' in filters:
         min_pot, max_pot = filters['potential_range']
-        candidate_df = candidate_df[candidate_df['potential'].between(min_pot, max_pot)]
+        initial_candidates = initial_candidates[initial_candidates['potential'].between(min_pot, max_pot)]
     if 'min_overall' in filters:
-        candidate_df = candidate_df[candidate_df['overall_rating'] >= filters['min_overall']]
+        initial_candidates = initial_candidates[initial_candidates['overall_rating'] >= filters['min_overall']]
 
-    prob = LpProblem("TeamBuilder", LpMaximize)
-    
-    player_vars = {}
+    # 2. **OPTIMISATION CLÉ**: Pré-filtrer un pool de joueurs pertinents pour le solveur
+    final_candidate_indices = set()
     positions_to_fill = FORMATIONS[formation]
+    for position, count in positions_to_fill.items():
+        # Pour chaque poste, trouver les joueurs qui peuvent y jouer
+        eligible_players = initial_candidates[initial_candidates['positions'].apply(lambda x: can_play_position(x, position))]
+        # Ne garder que les 30 meilleurs pour ce poste selon le critère
+        top_players_for_pos = eligible_players.nlargest(30, criteria)
+        final_candidate_indices.update(top_players_for_pos.index)
+    
+    candidate_df = initial_candidates.loc[list(final_candidate_indices)]
+
+    # 3. Lancer le solveur sur le pool de joueurs réduit
+    prob = LpProblem("TeamBuilder", LpMaximize)
+    player_vars = {}
 
     for position, count in positions_to_fill.items():
         eligible_players = candidate_df[candidate_df['positions'].apply(lambda x: can_play_position(x, position))]
@@ -100,13 +114,11 @@ def solve_team(df, formation, budget, criteria, filters):
 
     prob.solve()
 
-    # CORRIGÉ (AttributeError): La bonne façon de vérifier le statut est via la valeur numérique (1 = Optimal)
-    if prob.status == 1:
+    if prob.status == 1: # 1 = Optimal
         team = []
         for (p_idx, pos), var in player_vars.items():
             if var.varValue == 1:
-                player_data = df.loc[p_idx]
-                team.append({'player': player_data, 'position': pos})
+                team.append({'player': df.loc[p_idx], 'position': pos})
         return team
     else:
         return None
@@ -137,7 +149,6 @@ def main():
             age_range = st.slider("🎂 Âge", 16, 45, (18, 34))
             potential_range = st.slider("💎 **Potentiel**", 50, 100, (75, 99))
             min_overall = st.slider("⭐ Overall minimum", 40, 99, 70)
-            # CORRIGÉ: Case "Agents Libres" ré-intégrée
             include_free_agents = st.checkbox("🆓 Inclure agents libres (€0)", value=True)
             
             filters = {
@@ -148,7 +159,7 @@ def main():
             }
 
             if st.button("🚀 **TROUVER LA MEILLEURE ÉQUIPE**", type="primary", use_container_width=True):
-                with st.spinner("🧠 Le solveur analyse des milliers de combinaisons..."):
+                with st.spinner("⚡ Optimisation rapide en cours..."):
                     team = solve_team(df, formation, budget, criteria, filters)
                     st.session_state.team_results = team
 

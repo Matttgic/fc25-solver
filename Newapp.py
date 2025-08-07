@@ -66,9 +66,8 @@ def can_play_position(player_positions, required_position):
 
 def solve_team(df, formation, budget, criteria, filters):
     """
-    CORRIGÉ (Lenteur): Le solveur est maintenant beaucoup plus rapide grâce au pré-filtrage.
+    CORRIGÉ (Budget serré): Le pré-filtrage inclut maintenant des joueurs économiques.
     """
-    # 1. Appliquer les filtres généraux
     initial_candidates = df.copy()
     if not filters.get('include_free_agents', True):
         initial_candidates = initial_candidates[initial_candidates['value_numeric'] > 0]
@@ -82,19 +81,23 @@ def solve_team(df, formation, budget, criteria, filters):
     if 'min_overall' in filters:
         initial_candidates = initial_candidates[initial_candidates['overall_rating'] >= filters['min_overall']]
 
-    # 2. **OPTIMISATION CLÉ**: Pré-filtrer un pool de joueurs pertinents pour le solveur
     final_candidate_indices = set()
     positions_to_fill = FORMATIONS[formation]
     for position, count in positions_to_fill.items():
-        # Pour chaque poste, trouver les joueurs qui peuvent y jouer
         eligible_players = initial_candidates[initial_candidates['positions'].apply(lambda x: can_play_position(x, position))]
-        # Ne garder que les 30 meilleurs pour ce poste selon le critère
-        top_players_for_pos = eligible_players.nlargest(30, criteria)
-        final_candidate_indices.update(top_players_for_pos.index)
+        
+        # **OPTIMISATION CLÉ**: On prend les 15 meilleurs ET les 15 moins chers
+        top_players = eligible_players.nlargest(15, criteria)
+        budget_players = eligible_players.nsmallest(15, 'value_numeric')
+        
+        # On combine les deux listes pour avoir le meilleur des deux mondes
+        final_candidate_indices.update(top_players.index)
+        final_candidate_indices.update(budget_players.index)
     
     candidate_df = initial_candidates.loc[list(final_candidate_indices)]
+    if candidate_df.empty:
+        return None # Aucun joueur ne correspond aux filtres de base
 
-    # 3. Lancer le solveur sur le pool de joueurs réduit
     prob = LpProblem("TeamBuilder", LpMaximize)
     player_vars = {}
 
@@ -139,16 +142,16 @@ def main():
         with col1:
             st.subheader("Configuration")
             formation = st.selectbox("📋 **Formation**", list(FORMATIONS.keys()))
-            budget = st.number_input("💰 **Budget total (M€)**", min_value=1.0, value=100.0, step=10.0)
+            budget = st.number_input("💰 **Budget total (M€)**", min_value=0.1, value=100.0, step=10.0)
             
             st.subheader("Objectif d'Optimisation")
             criteria = st.selectbox("🎯 **Maximiser**", ["score", "overall_rating", "potential"],
                                     format_func=lambda x: {"score": "Score (Overall + Potentiel)", "overall_rating": "Overall Actuel", "potential": "Potentiel Futur"}[x])
 
             st.subheader("Filtres")
-            age_range = st.slider("🎂 Âge", 16, 45, (18, 34))
-            potential_range = st.slider("💎 **Potentiel**", 50, 100, (75, 99))
-            min_overall = st.slider("⭐ Overall minimum", 40, 99, 70)
+            age_range = st.slider("🎂 Âge", 16, 45, (16, 40))
+            potential_range = st.slider("💎 **Potentiel**", 40, 99, (40, 99))
+            min_overall = st.slider("⭐ Overall minimum", 40, 99, 40)
             include_free_agents = st.checkbox("🆓 Inclure agents libres (€0)", value=True)
             
             filters = {
@@ -188,7 +191,7 @@ def main():
                             "Coût (M€)": f"{cost:.2f}"
                         })
                     
-                    team_df = pd.DataFrame(team_data)
+                    team_df = pd.DataFrame(team_data).sort_values(by="Position", key=lambda x: x.map({pos: i for i, pos in enumerate(FORMATIONS[formation].keys())}))
                     st.dataframe(team_df, use_container_width=True, hide_index=True)
 
                     m_col1, m_col2 = st.columns(2)

@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 from datetime import datetime
+from sklearn.preprocessing import MinMaxScaler
 
 # --- Configuration de la page ---
 st.set_page_config(page_title="FC25 Team Builder Pro", page_icon="⚽", layout="wide")
@@ -52,18 +53,15 @@ FORMATIONS = {
     "4-2-3-1": {"positions": {"GK": 1, "CB": 2, "LB": 1, "RB": 1, "CDM": 2, "CAM": 1, "LW": 1, "RW": 1, "ST": 1}},
 }
 
-POSITION_COMPATIBILITY = {
-    "GK": ["GK"], "CB": ["CB"], "LB": ["LB", "LWB"], "RB": ["RB", "RWB"],
-    "LWB": ["LWB", "LB", "LM"], "RWB": ["RWB", "RB", "RM"], "CDM": ["CDM", "CM"],
-    "CM": ["CM", "CDM", "CAM"], "LM": ["LM", "LW", "CM"], "RM": ["RM", "RW", "CM"],
-    "CAM": ["CAM", "CM", "ST"], "LW": ["LW", "LM", "ST"], "RW": ["RW", "RM", "ST"],
-    "ST": ["ST", "CF", "LW", "RW"]
+# Catégories de postes pour une meilleure similarité
+POSITION_CATEGORIES = {
+    "ATT": ["ST", "CF", "LW", "RW"],
+    "MIL": ["CAM", "CM", "CDM", "LM", "RM"],
+    "DEF": ["CB", "LB", "RB", "LWB", "RWB"],
+    "GK": ["GK"]
 }
 
-# Colonnes de statistiques à extraire
-STATS_COLUMNS = [
-    'pace', 'shooting', 'passing', 'dribbling', 'defending', 'physicality'
-]
+STATS_COLUMNS = ['pace', 'shooting', 'passing', 'dribbling', 'defending', 'physicality']
 
 # --- Fonctions ---
 @st.cache_data
@@ -83,15 +81,17 @@ def load_data(uploaded_file):
         df['age'] = 2025 - pd.to_datetime(df['dob'], errors='coerce').dt.year
         df['potential_gap'] = df.get('potential', df['overall_rating']) - df['overall_rating']
         
-        # S'assurer que les colonnes de stats existent
+        # S'assurer que les colonnes de stats existent et les remplir si besoin
         for col in STATS_COLUMNS:
             if col not in df.columns:
-                df[col] = np.nan # Ajouter la colonne avec des NaN si elle manque
+                df[col] = 50 # Valeur par défaut si manquante
+            else:
+                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(50)
         
         if 'player_id' not in df.columns:
             df['player_id'] = range(len(df))
             
-        return df.dropna(subset=['name', 'overall_rating', 'age'])
+        return df.dropna(subset=['name', 'overall_rating', 'age', 'positions'])
     except Exception as e:
         st.error(f"❌ Erreur lors du chargement du fichier : {e}")
         return None
@@ -117,11 +117,13 @@ def extract_player_name(selected_option):
     return selected_option.split(' (')[0]
 
 def can_play_position(player_positions, required_position):
-    """Vérifie la compatibilité de la position du joueur."""
+    """
+    CORRIGÉ (Pb 1): Vérifie si le poste requis est parmi les 3 premiers postes du joueur.
+    """
     if pd.isna(player_positions): return False
-    player_pos_list = str(player_positions).split(',')
-    compatible = POSITION_COMPATIBILITY.get(required_position, [required_position])
-    return any(pos.strip() in compatible for pos in player_pos_list)
+    # Ne prend que les 3 premiers postes listés pour plus de réalisme
+    player_main_positions = [p.strip() for p in str(player_positions).split(',')[:3]]
+    return required_position in player_main_positions
 
 def get_filtered_players(df, position=None, exclude_ids=None, filters=None):
     """Filtre les joueurs selon une multitude de critères."""
@@ -132,7 +134,6 @@ def get_filtered_players(df, position=None, exclude_ids=None, filters=None):
         result = result[result['positions'].apply(lambda x: can_play_position(x, position))]
     
     if filters:
-        # Appliquer les filtres de manière robuste
         if 'age_range' in filters:
             min_age, max_age = filters['age_range']
             result = result[result['age'].between(min_age, max_age)]
@@ -154,46 +155,77 @@ def optimize_team(df, formation, budget, filters):
     """Optimise une équipe en fonction de la formation, du budget et des filtres."""
     team = []
     used_ids = set()
-    positions = FORMATIONS[formation]["positions"]
+    positions_needed = []
+    for pos, count in FORMATIONS[formation]["positions"].items():
+        positions_needed.extend([pos] * count)
 
-    for position, count in sorted(positions.items(), key=lambda x: -df['overall_rating'].max()):
-        for _ in range(count):
-            candidates = get_filtered_players(df, position, used_ids, {**filters, 'max_budget': budget})
-            if candidates.empty: continue
+    for position in positions_needed:
+        candidates = get_filtered_players(df, position, used_ids, {**filters, 'max_budget': budget})
+        if candidates.empty: continue
 
-            # Score composite pour le meilleur choix
-            candidates['score'] = (
-                candidates['overall_rating'] * 0.5 +
-                candidates['potential'] * 0.3 +
-                (40 - candidates['age']) * 0.2
-            )
-            
-            best_player = candidates.loc[candidates['score'].idxmax()]
-            cost = best_player['value_numeric']
-            
-            if budget >= cost:
-                team.append({'player': best_player, 'position': position, 'cost': cost})
-                budget -= cost
-                used_ids.add(best_player['player_id'])
+        candidates['score'] = (
+            candidates['overall_rating'] * 0.5 +
+            candidates['potential'] * 0.3 +
+            (40 - candidates['age']) * 0.2
+        )
+        
+        best_player = candidates.loc[candidates['score'].idxmax()]
+        cost = best_player['value_numeric']
+        
+        if budget >= cost:
+            team.append({'player': best_player, 'position': position, 'cost': cost})
+            budget -= cost
+            used_ids.add(best_player['player_id'])
 
     return team, budget
 
 def find_similar_players(df, target_name, budget, top_n=5):
-    """Trouve des joueurs similaires à un joueur cible."""
+    """
+    CORRIGÉ (Pb 2): Trouve des joueurs similaires en se basant sur leurs statistiques et leur poste.
+    """
+    if target_name not in df['name'].values:
+        return pd.DataFrame() # Retourne un DataFrame vide si le joueur n'est pas trouvé
+        
     target_player = df[df['name'] == target_name].iloc[0]
     
-    df_filtered = df[
-        (df['value_numeric'] <= budget) & 
-        (df['player_id'] != target_player['player_id']) &
-        (df['age'].between(target_player['age'] - 3, target_player['age'] + 3))
-    ].copy()
+    # 1. Déterminer la catégorie de poste du joueur cible
+    target_pos = target_player['positions'].split(',')[0].strip()
+    target_category = None
+    for category, positions in POSITION_CATEGORIES.items():
+        if target_pos in positions:
+            target_category = category
+            break
     
-    # Score de similarité
-    df_filtered['similarity'] = (
-        100 - abs(df_filtered['overall_rating'] - target_player['overall_rating']) * 1.5 -
-        abs(df_filtered['potential'] - target_player['potential']) * 1.5 -
-        abs(df_filtered['age'] - target_player['age']) * 1.0
-    )
+    if not target_category: return pd.DataFrame()
+
+    # 2. Filtrer les candidats par catégorie de poste et budget
+    candidate_positions = POSITION_CATEGORIES[target_category]
+    df_filtered = df[
+        (df['positions'].apply(lambda x: x.split(',')[0].strip() in candidate_positions)) &
+        (df['value_numeric'] <= budget) & 
+        (df['player_id'] != target_player['player_id'])
+    ].copy()
+
+    if df_filtered.empty: return pd.DataFrame()
+
+    # 3. Calculer la similarité basée sur les stats
+    target_stats = target_player[STATS_COLUMNS]
+    candidates_stats = df_filtered[STATS_COLUMNS]
+    
+    # Normalisation des stats pour une comparaison équitable
+    scaler = MinMaxScaler()
+    all_stats = pd.concat([pd.DataFrame([target_stats]), candidates_stats])
+    scaler.fit(all_stats)
+    
+    target_stats_scaled = scaler.transform(pd.DataFrame([target_stats]))[0]
+    candidates_stats_scaled = scaler.transform(candidates_stats)
+
+    # Calcul de la distance euclidienne (plus la distance est faible, plus ils sont similaires)
+    distances = np.linalg.norm(candidates_stats_scaled - target_stats_scaled, axis=1)
+    
+    # Convertir la distance en un score de similarité (0-100)
+    df_filtered['similarity'] = (1 - (distances / np.sqrt(len(STATS_COLUMNS)))) * 100
+    
     return df_filtered.nlargest(top_n, 'similarity')
 
 
@@ -201,16 +233,21 @@ def display_team_formation(players, formation):
     """Affiche la composition de l'équipe."""
     st.subheader(f"🏆 Composition en {formation}")
     
-    # Organiser les joueurs par ligne
     lines = {"Attaquants": [], "Milieux": [], "Défenseurs": [], "Gardien": []}
     for p in players:
-        pos = p['position']
-        if pos in ["ST", "LW", "RW", "CF"]: lines["Attaquants"].append(p)
-        elif pos in ["CM", "CAM", "CDM", "LM", "RM"]: lines["Milieux"].append(p)
-        elif pos in ["CB", "LB", "RB", "LWB", "RWB"]: lines["Défenseurs"].append(p)
+        cat = None
+        main_pos = p['position']
+        for category, positions in POSITION_CATEGORIES.items():
+            if main_pos in positions:
+                cat = category
+                break
+        
+        if cat == "ATT": lines["Attaquants"].append(p)
+        elif cat == "MIL": lines["Milieux"].append(p)
+        elif cat == "DEF": lines["Défenseurs"].append(p)
         else: lines["Gardien"].append(p)
 
-    for line_name, line_players in lines.items():
+    for line_name, line_players in reversed(list(lines.items())):
         if not line_players: continue
         st.write(f"**{line_name}**")
         cols = st.columns(len(line_players) or 1)
@@ -220,7 +257,7 @@ def display_team_formation(players, formation):
                 st.markdown(f"""
                 <div class="player-card">
                     <b>{p['name']}</b><br>
-                    {player_data['position']} | {p['overall_rating']} OVR<br>
+                    {player_data['position']} | {int(p['overall_rating'])} OVR<br>
                     €{player_data['cost']:.1f}M | {int(p.get('age', 0))} ans
                 </div>
                 """, unsafe_allow_html=True)
@@ -298,7 +335,7 @@ def main():
                 max_price = st.number_input("💰 **Prix max par joueur (M€)**", 0, 500, 50)
                 
                 st.subheader("Filtres")
-                search_pos = st.selectbox("📍 Position", ["Toutes"] + list(POSITION_COMPATIBILITY.keys()), key="search_pos")
+                search_pos = st.selectbox("📍 Position", ["Toutes"] + sorted(list(set(pos for poses in FORMATIONS.values() for pos in poses["positions"]))), key="search_pos")
                 search_age = st.slider("🎂 Âge", 16, 45, (18, 30), key="search_age")
                 search_potential = st.slider("💎 **Potentiel**", 50, 100, (82, 99), key="search_potential")
                 search_overall = st.slider("⭐ Overall min", 40, 99, 78, key="search_overall")
@@ -307,8 +344,7 @@ def main():
                     'age_range': search_age,
                     'potential_range': search_potential,
                     'min_overall': search_overall,
-                    'max_budget': max_price,
-                    'include_free_agents': True # Toujours inclure dans la recherche
+                    'max_budget': max_price
                 }
 
                 if st.button("🔍 **LANCER LA RECHERCHE**"):
@@ -340,7 +376,7 @@ def main():
         # --- ONGLET 3: JOUEURS SIMILAIRES ---
         with tab3:
             st.header("👥 **Trouver des Joueurs Similaires**")
-            st.info("Choisissez un joueur et un budget pour découvrir des alternatives au profil comparable.")
+            st.info("Choisissez un joueur et un budget pour découvrir des alternatives au profil statistique comparable.")
             
             col1, col2 = st.columns([1, 2])
             with col1:
@@ -358,36 +394,32 @@ def main():
                     similar_budget = st.number_input("💰 **Budget max (M€)**", 1, 500, 100)
                     num_similar = st.slider("📊 **Nombre de résultats**", 3, 15, 5)
 
-                    if st.button("FIND SIMILAR PLAYERS", type="primary"):
-                        with st.spinner("Recherche d'alternatives..."):
+                    if st.button("TROUVER DES JOUEURS SIMILAIRES", type="primary"):
+                        with st.spinner("Recherche d'alternatives basées sur les stats..."):
                             similar_players = find_similar_players(df, target_name, similar_budget, num_similar)
                             if not similar_players.empty:
                                 st.session_state.similar_players = similar_players
                                 st.session_state.target_name = target_name
                             else:
-                                st.warning(f"Aucun joueur similaire à '{target_name}' trouvé dans ce budget.")
+                                st.warning(f"Aucun joueur statistiquement similaire à '{target_name}' trouvé dans ce budget.")
                                 st.session_state.similar_players = pd.DataFrame()
             
             with col2:
                 if 'similar_players' in st.session_state and not st.session_state.similar_players.empty:
                     similar = st.session_state.similar_players
-                    st.success(f"**Alternatives trouvées pour {st.session_state.target_name}**")
+                    st.success(f"**Alternatives statistiques trouvées pour {st.session_state.target_name}**")
                     
-                    display_similar = similar[['name', 'age', 'overall_rating', 'potential', 'value_numeric', 'similarity']].copy()
+                    display_similar = similar[['name', 'age', 'overall_rating', 'value_numeric', 'similarity'] + STATS_COLUMNS].copy()
                     display_similar.rename(columns={
-                        'name': 'Nom', 'age': 'Âge', 'overall_rating': 'OVR', 'potential': 'POT',
-                        'value_numeric': 'Prix (M€)', 'similarity': 'Similarité (%)'
+                        'name': 'Nom', 'age': 'Âge', 'overall_rating': 'OVR', 
+                        'value_numeric': 'Prix (M€)', 'similarity': 'Similarité (%)',
+                        'pace': 'VIT', 'shooting': 'TIR', 'passing': 'PAS', 
+                        'dribbling': 'DRI', 'defending': 'DEF', 'physicality': 'PHY'
                     }, inplace=True)
                     display_similar['Prix (M€)'] = display_similar['Prix (M€)'].round(1)
                     display_similar['Similarité (%)'] = display_similar['Similarité (%)'].round(1)
                     
-                    st.dataframe(display_similar, use_container_width=True)
-
-                    # Graphique
-                    fig = px.bar(display_similar, x='Nom', y='Similarité (%)',
-                                 title=f"Score de similarité vs {st.session_state.target_name}",
-                                 color='Similarité (%)', color_continuous_scale="Greens")
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.dataframe(display_similar.style.background_gradient(cmap='Greens', subset=['Similarité (%)']), use_container_width=True)
 
 
 if __name__ == "__main__":

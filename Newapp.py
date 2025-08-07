@@ -335,18 +335,43 @@ def main():
                 col1, col2 = st.columns([1, 2])
                 
                 with col1:
-                    target_name = st.text_input("🎯 **Nom du joueur cible**", placeholder="Ex: Haaland")
+                    # Champ de recherche avec suggestions
+                    search_query = st.text_input("🎯 **Rechercher un joueur**", placeholder="Ex: Haaland", key="similar_search")
+                    
+                    # Filtrer les joueurs correspondant à la recherche
+                    if search_query:
+                        matching_players = df[df['name'].str.contains(search_query, case=False, na=False)]['name'].unique()
+                        if len(matching_players) == 0:
+                            st.warning(f"❌ Aucun joueur trouvé pour '{search_query}'")
+                            matching_players = []
+                        else:
+                            st.success(f"✅ {len(matching_players)} joueur(s) trouvé(s) pour '{search_query}'")
+                    else:
+                        matching_players = []
+                    
+                    # Liste déroulante pour sélectionner un joueur
+                    selected_player = st.selectbox(
+                        "🎯 **Sélectionnez un joueur**",
+                        options=[""] + sorted(matching_players),  # Ajout d'une option vide par défaut
+                        help="Choisissez un joueur parmi les suggestions",
+                        key="similar_player_select"
+                    )
+                    
+                    # Paramètres supplémentaires
                     similar_budget = st.number_input("💰 **Budget max (€M)**", min_value=1, max_value=500, value=100)
                     num_similar = st.slider("📊 **Nombre de résultats**", 3, 15, 5)
                     
-                    if st.button("🔍 **TROUVER SIMILAIRES**") and target_name:
-                        similar_players = find_similar_players(df, target_name, similar_budget, num_similar)
+                    if st.button("🔍 **TROUVER SIMILAIRES**") and selected_player:
+                        similar_players = find_similar_players(df, selected_player, similar_budget, num_similar)
                         
                         if not similar_players.empty:
                             st.session_state['similar_players'] = similar_players
-                            st.session_state['target_name'] = target_name
+                            st.session_state['target_name'] = selected_player
+                            st.success(f"✅ **Joueurs similaires à {selected_player} trouvés**")
                         else:
-                            st.warning(f"❌ Aucun joueur similaire à '{target_name}' trouvé")
+                            st.warning(f"❌ Aucun joueur similaire à '{selected_player}' trouvé dans le budget")
+                    elif st.button("🔍 **TROUVER SIMILAIRES**") and not selected_player:
+                        st.warning("❌ Veuillez sélectionner un joueur dans la liste")
                 
                 with col2:
                     if 'similar_players' in st.session_state:
@@ -393,7 +418,7 @@ def main():
                         st.info("🔍 Créez une équipe ou faites une recherche d'abord")
                         return
                     
-                    # Graphiques
+                    # Graph triphes
                     col_g1, col_g2 = st.columns(2)
                     
                     with col_g1:
@@ -482,4 +507,4 @@ def main():
         """)
 
 if __name__ == "__main__":
-    main()
+    main() 

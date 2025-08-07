@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.express as px
 from pulp import LpProblem, LpVariable, lpSum, LpMaximize, LpBinary
 
 # --- Configuration de la page ---
@@ -33,18 +32,39 @@ FORMATIONS = {
 # --- Fonctions ---
 @st.cache_data
 def load_data(uploaded_file):
-    """Charge et nettoie les données."""
+    """
+    CORRIGÉ: Charge et nettoie les données de manière robuste.
+    """
     try:
         df = pd.read_csv(uploaded_file)
+        
+        # Logique de nettoyage de la valeur plus robuste
         if 'value' in df.columns:
-            df['value_numeric'] = df['value'].astype(str).str.replace('[€,]', '', regex=True)
-            df['value_numeric'] = pd.to_numeric(df['value_numeric'].str.replace('[MK]', '', regex=True), errors='coerce')
-            df.loc[df['value_clean'].str.contains('K', na=False), 'value_numeric'] /= 1000
-            df['value_numeric'] = df['value_numeric'].fillna(0)
+            # Crée une copie pour éviter les SettingWithCopyWarning
+            value_str = df['value'].astype(str).str.replace('[€,]', '', regex=True).str.strip()
+            
+            # Applique les multiplicateurs M (millions) et K (milliers)
+            is_million = value_str.str.endswith('M', na=False)
+            is_thousand = value_str.str.endswith('K', na=False)
+            
+            # Extrait la partie numérique
+            numeric_part = pd.to_numeric(value_str.str.replace('[MK]', '', regex=True), errors='coerce')
+            
+            # Calcule la valeur finale
+            df['value_numeric'] = numeric_part
+            df.loc[is_million, 'value_numeric'] *= 1
+            df.loc[is_thousand, 'value_numeric'] /= 1000
+        else:
+            # Si la colonne 'value' n'existe pas, on initialise à 0 pour éviter les erreurs
+            df['value_numeric'] = 0
+            
+        df['value_numeric'] = df['value_numeric'].fillna(0)
+        
+        # Autres calculs
         df['age'] = 2025 - pd.to_datetime(df['dob'], errors='coerce').dt.year
-        # Score combinant overall et potentiel
         df['score'] = df['overall_rating'] * 0.6 + df['potential'] * 0.4
         df['player_id'] = df.index
+        
         return df.dropna(subset=['name', 'overall_rating', 'age', 'positions', 'value_numeric'])
     except Exception as e:
         st.error(f"❌ Erreur de chargement : {e}")
@@ -56,9 +76,7 @@ def can_play_position(player_positions, required_position):
     return required_position in [p.strip() for p in str(player_positions).split(',')[:3]]
 
 def solve_team(df, formation, budget, criteria, filters):
-    """
-    CORRIGÉ (Pb 1): Utilise un solveur d'optimisation linéaire pour trouver la meilleure équipe.
-    """
+    """Utilise un solveur d'optimisation linéaire pour trouver la meilleure équipe."""
     # 1. Filtrer les joueurs éligibles en amont
     candidate_df = df.copy()
     if 'age_range' in filters:
@@ -73,31 +91,26 @@ def solve_team(df, formation, budget, criteria, filters):
     # 2. Définir le problème d'optimisation
     prob = LpProblem("TeamBuilder", LpMaximize)
     
-    # 3. Créer les variables : une pour chaque joueur possible pour chaque poste
+    # 3. Créer les variables
     player_vars = {}
     positions_to_fill = FORMATIONS[formation]
 
     for position, count in positions_to_fill.items():
-        # Pour chaque poste, trouver les joueurs qui peuvent y jouer
         eligible_players = candidate_df[candidate_df['positions'].apply(lambda x: can_play_position(x, position))]
         for p_idx in eligible_players.index:
-            # Créer une variable binaire: 1 si le joueur est choisi pour ce poste, 0 sinon
             player_vars[(p_idx, position)] = LpVariable(f"player_{p_idx}_pos_{position}", cat=LpBinary)
 
-    # 4. Définir l'objectif : Maximiser le critère choisi
+    # 4. Définir l'objectif
     prob += lpSum(player_vars[(p_idx, pos)] * candidate_df.loc[p_idx, criteria] 
                    for (p_idx, pos) in player_vars), "Total_Score"
 
     # 5. Ajouter les contraintes
-    # Contrainte de budget
     prob += lpSum(player_vars[(p_idx, pos)] * candidate_df.loc[p_idx, 'value_numeric'] 
                    for (p_idx, pos) in player_vars) <= budget, "Budget"
 
-    # Contrainte de formation : remplir chaque poste avec le bon nombre de joueurs
     for position, count in positions_to_fill.items():
         prob += lpSum(player_vars[(p_idx, pos)] for (p_idx, pos) in player_vars if pos == position) == count, f"Formation_{position}"
 
-    # Contrainte d'unicité : un joueur ne peut être sélectionné qu'une seule fois
     for p_idx in candidate_df.index:
         prob += lpSum(player_vars[(p_idx, pos)] for (p_idx_c, pos) in player_vars if p_idx_c == p_idx) <= 1, f"Uniqueness_{p_idx}"
 
@@ -113,7 +126,7 @@ def solve_team(df, formation, budget, criteria, filters):
                 team.append({'player': player_data, 'position': pos})
         return team
     else:
-        return None # Aucune solution trouvée
+        return None
 
 # --- Application Principale ---
 def main():
@@ -159,13 +172,14 @@ def main():
                 else:
                     st.success(f"✅ **Équipe optimale trouvée ! ({len(team)} joueurs)**")
                     
-                    # CORRIGÉ (Pb 1): Affichage en liste/tableau simple
                     team_data = []
                     total_cost = 0
+                    total_score = 0
                     for p_data in team:
                         player = p_data['player']
                         cost = player['value_numeric']
                         total_cost += cost
+                        total_score += player[criteria]
                         team_data.append({
                             "Position": p_data['position'],
                             "Nom": player['name'],
@@ -181,7 +195,7 @@ def main():
                     # Métriques
                     m_col1, m_col2 = st.columns(2)
                     m_col1.metric("💰 **Coût Total de l'Équipe**", f"€{total_cost:.2f}M", f"Budget: €{budget:.2f}M")
-                    m_col2.metric(f"⭐ **Moyenne '{criteria.replace('_', ' ').title()}'**", f"{team_df[criteria.replace('score', 'OVR').replace('_rating','').upper()].mean():.1f}")
+                    m_col2.metric(f"⭐ **Moyenne du critère optimisé**", f"{(total_score / len(team)):.1f}")
                     
                     # Export
                     csv = team_df.to_csv(index=False).encode('utf-8')
@@ -193,4 +207,4 @@ def main():
                     )
 
 if __name__ == "__main__":
-    main()
+    main() 

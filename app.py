@@ -30,13 +30,6 @@ FORMATIONS = {
 }
 ALL_POSITIONS = sorted(list(set(pos for formation in FORMATIONS.values() for pos in formation.keys())))
 
-FORMATION_LINES = {
-    "4-3-3": [["ST"], ["LW", "RW"], ["CM", "CAM", "CM"], ["LB", "CB", "CB", "RB"], ["GK"]],
-    "4-4-2": [["ST", "ST"], ["LM", "CM", "CM", "RM"], ["LB", "CB", "CB", "RB"], ["GK"]],
-    "3-5-2": [["ST", "ST"], ["CAM"], ["LWB", "CDM", "CDM", "RWB"], ["CB", "CB", "CB"], ["GK"]],
-    "4-2-3-1": [["ST"], ["LW", "CAM", "RW"], ["CDM", "CDM"], ["LB", "CB", "CB", "RB"], ["GK"]],
-}
-
 
 # --- Fonctions ---
 @st.cache_data
@@ -145,61 +138,6 @@ def display_team_results(team, formation, budget, criteria, title):
     m2.metric(f"⭐ Moyenne '{criteria.replace('_', ' ').replace('rating', 'Générale').title()}'", f"{(total_score / len(team)):.1f}")
     st.download_button(f"📥 Télécharger {title}", team_df.to_csv(index=False).encode('utf-8'), f'{title.replace(" ", "_").lower()}.csv', 'text/csv', key=f"download_{title}")
 
-def display_team_formation(team, formation):
-    """Affiche la composition de l'équipe sur un terrain de football stylisé."""
-    st.markdown("##### Composition Visuelle")
-
-    lines = FORMATION_LINES.get(formation)
-    if not lines:
-        st.warning(f"Aperçu de la formation non disponible pour {formation}.")
-        return
-
-    # Créer un dictionnaire de joueurs par position pour un accès facile
-    team_by_position = {}
-    # Gérer les postes multiples (ex: 2 CM)
-    for p_data in team:
-        pos = p_data['position']
-        if pos not in team_by_position:
-            team_by_position[pos] = []
-        team_by_position[pos].append(p_data['player'])
-
-    # Simuler un terrain de foot
-    st.markdown(
-        """
-        <div style="background-color: #2E7D32; border: 2px solid white; border-radius: 10px; padding: 20px; color: white;">
-        """, unsafe_allow_html=True
-    )
-
-    for line in lines:
-        cols = st.columns(len(line))
-        for i, pos_template in enumerate(line):
-            with cols[i]:
-                player = None
-                # Récupérer le prochain joueur disponible pour ce poste
-                if pos_template in team_by_position and team_by_position[pos_template]:
-                    player = team_by_position[pos_template].pop(0)
-
-                if player is not None:
-                    st.markdown(
-                        f"""
-                        <div style="text-align: center; background-color: rgba(0,0,0,0.3); padding: 10px; border-radius: 8px; margin: 2px;">
-                            <strong>{player['name'].split(' ')[-1]}</strong><br>
-                            <small>{pos_template} | {player['overall_rating']}</small>
-                        </div>
-                        """, unsafe_allow_html=True
-                    )
-                else:
-                     st.markdown(
-                        f"""
-                        <div style="text-align: center; background-color: rgba(255,255,255,0.1); padding: 10px; border-radius: 8px; margin: 2px; opacity: 0.7;">
-                            <strong>-</strong><br>
-                            <small>{pos_template}</small>
-                        </div>
-                        """, unsafe_allow_html=True
-                    )
-
-    st.markdown("</div>", unsafe_allow_html=True)
-
 
 def search_players(df, positions_to_find, budget, criteria, filters):
     """Filtre et retourne les meilleurs joueurs pour les postes et quantités demandés."""
@@ -285,19 +223,13 @@ def main():
                 if team1 is None:
                     st.error("❌ **Aucune solution trouvée.** Il est mathématiquement impossible de former une équipe avec ces filtres et ce budget. Essayez d'augmenter le budget ou d'élargir les filtres.")
                 else:
-                    st.subheader("🏆 Meilleure Équipe Possible")
-                    display_team_formation(team1, formation)
-                    with st.expander("Voir les détails et statistiques"):
-                        display_team_results(team1, formation, budget, criteria, "🏆 Meilleure Équipe Possible")
+                    display_team_results(team1, formation, budget, criteria, "🏆 Meilleure Équipe Possible")
 
                     st.markdown("---")
 
                     team2 = st.session_state.get('team2_results')
                     if team2:
-                        st.subheader("🥈 Deuxième Meilleure Équipe (Nouveaux Joueurs)")
-                        display_team_formation(team2, formation)
-                        with st.expander("Voir les détails et statistiques"):
-                            display_team_results(team2, formation, budget, criteria, "🥈 Deuxième Meilleure Équipe (Nouveaux Joueurs)")
+                        display_team_results(team2, formation, budget, criteria, "🥈 Deuxième Meilleure Équipe (Nouveaux Joueurs)")
                     else:
                         st.info("Aucune deuxième équipe n'a pu être formée avec les joueurs et le budget restants.")
 

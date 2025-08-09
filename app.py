@@ -39,6 +39,11 @@ def load_data(uploaded_file):
         df = pd.read_csv(uploaded_file)
         df.columns = df.columns.str.strip() # Nettoyer les noms de colonnes
 
+        # Nettoyer les données textuelles importantes
+        for col in ['country_name', 'club_name', 'club_league_name']:
+            if col in df.columns:
+                df[col] = df[col].str.strip()
+
         if 'value' in df.columns:
             value_str = df['value'].astype(str).str.replace('[€,]', '', regex=True).str.strip()
             is_million = value_str.str.endswith('M', na=False)

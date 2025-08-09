@@ -79,6 +79,9 @@ def solve_team(df, formation, budget, criteria, filters, excluded_player_ids=Non
     if 'min_overall' in filters:
         candidate_df = candidate_df[candidate_df['overall_rating'] >= filters['min_overall']]
     
+    if filters.get('nationality') and filters['nationality'] != "Toutes":
+        candidate_df = candidate_df[candidate_df['country_name'] == filters['nationality']]
+
     if candidate_df.empty:
         return None if num_solutions == 1 else []
 
@@ -271,6 +274,9 @@ def main():
         st.header("🏗️ Constructeur d'Équipe Optimisé")
         st.info("Le solveur recherche la meilleure équipe mathématiquement possible, puis une deuxième équipe avec les joueurs restants.")
 
+        # Préparer les listes pour les filtres
+        nationalities = ["Toutes"] + sorted(df['country_name'].unique())
+
         team_builder_cols = st.columns([1, 2])
         with team_builder_cols[0]:
             st.subheader("Configuration")
@@ -283,9 +289,14 @@ def main():
                 age_range = st.slider("🎂 Âge", 16, 45, (16, 40), key="t1_age")
                 potential_range = st.slider("💎 Potentiel", 40, 99, (40, 99), key="t1_potential")
                 min_overall = st.slider("⭐ Overall minimum", 40, 99, 40, key="t1_overall")
+                selected_nationality = st.selectbox("🌍 Nationalité", options=nationalities)
                 include_free_agents = st.checkbox("🆓 Inclure agents libres (€0)", value=True, key="t1_free_agents")
 
-            filters = {'age_range': age_range, 'potential_range': potential_range, 'min_overall': min_overall, 'include_free_agents': include_free_agents}
+            filters = {
+                'age_range': age_range, 'potential_range': potential_range,
+                'min_overall': min_overall, 'include_free_agents': include_free_agents,
+                'nationality': selected_nationality
+            }
 
             if st.button("🚀 TROUVER LES ÉQUIPES OPTIMALES", type="primary", use_container_width=True):
                 team1 = None

@@ -275,7 +275,8 @@ def main():
         st.info("Le solveur recherche la meilleure équipe mathématiquement possible, puis une deuxième équipe avec les joueurs restants.")
 
         # Préparer les listes pour les filtres
-        nationalities = ["Toutes"] + sorted(df['country_name'].unique())
+        unique_nationalities = df['country_name'].dropna().unique()
+        nationalities = ["Toutes"] + sorted(unique_nationalities)
 
         team_builder_cols = st.columns([1, 2])
         with team_builder_cols[0]:

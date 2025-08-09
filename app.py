@@ -37,6 +37,8 @@ def load_data(uploaded_file):
     """Charge et nettoie les données."""
     try:
         df = pd.read_csv(uploaded_file)
+        df.columns = df.columns.str.strip() # Nettoyer les noms de colonnes
+
         if 'value' in df.columns:
             value_str = df['value'].astype(str).str.replace('[€,]', '', regex=True).str.strip()
             is_million = value_str.str.endswith('M', na=False)

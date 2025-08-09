@@ -355,13 +355,22 @@ def main():
             if results.empty:
                 st.warning("Aucun joueur ne correspond à tous vos critères. Essayez d'élargir votre recherche.")
             else:
-                display_df = results[['requested_position', 'name', 'age', 'overall_rating', 'potential', 'value_numeric', 'club_name']].copy()
+                # 1. Trier les résultats avant de renommer les colonnes
+                sorted_results = results.sort_values(by=['requested_position', search_criteria], ascending=[True, False])
+
+                # 2. Définir les colonnes à afficher et s'assurer qu'elles existent
+                cols_to_show = ['requested_position', 'name', 'age', 'overall_rating', 'potential', 'score', 'value_numeric', 'club_name']
+                display_df = sorted_results[[col for col in cols_to_show if col in sorted_results.columns]].copy()
+
+                # 3. Renommer les colonnes pour l'affichage
                 display_df.rename(columns={
                     'requested_position': 'Poste Cherché', 'name': 'Nom', 'age': 'Âge',
-                    'overall_rating': 'Note', 'potential': 'Potentiel', 'value_numeric': 'Valeur (M€)', 'club_name': 'Club'
+                    'overall_rating': 'Note', 'potential': 'Potentiel', 'score': 'Score',
+                    'value_numeric': 'Valeur (M€)', 'club_name': 'Club'
                 }, inplace=True)
-                st.dataframe(display_df.sort_values(by=['Poste Cherché', search_criteria], ascending=[True, False]), use_container_width=True, hide_index=True)
-                st.download_button("📥 Télécharger les résultats", results.to_csv(index=False).encode('utf-8'), 'recherche_joueurs.csv', 'text/csv')
+
+                st.dataframe(display_df, use_container_width=True, hide_index=True)
+                st.download_button("📥 Télécharger les résultats", sorted_results.to_csv(index=False).encode('utf-8'), 'recherche_joueurs.csv', 'text/csv', key='download_search')
 
 if __name__ == "__main__":
     main()

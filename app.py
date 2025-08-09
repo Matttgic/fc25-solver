@@ -30,6 +30,14 @@ FORMATIONS = {
 }
 ALL_POSITIONS = sorted(list(set(pos for formation in FORMATIONS.values() for pos in formation.keys())))
 
+FORMATION_LINES = {
+    "4-3-3": [["ST"], ["LW", "RW"], ["CM", "CAM", "CM"], ["LB", "CB", "CB", "RB"], ["GK"]],
+    "4-4-2": [["ST", "ST"], ["LM", "CM", "CM", "RM"], ["LB", "CB", "CB", "RB"], ["GK"]],
+    "3-5-2": [["ST", "ST"], ["CAM"], ["LWB", "CDM", "CDM", "RWB"], ["CB", "CB", "CB"], ["GK"]],
+    "4-2-3-1": [["ST"], ["LW", "CAM", "RW"], ["CDM", "CDM"], ["LB", "CB", "CB", "RB"], ["GK"]],
+}
+
+
 # --- Fonctions ---
 @st.cache_data
 def load_data(uploaded_file):
@@ -135,12 +143,68 @@ def display_team_results(team, formation, budget, criteria, title):
     m1, m2 = st.columns(2)
     m1.metric("💰 Coût Total", f"€{total_cost:.2f}M", f"Budget: €{budget:.2f}M")
     m2.metric(f"⭐ Moyenne '{criteria.replace('_', ' ').replace('rating', 'Générale').title()}'", f"{(total_score / len(team)):.1f}")
-    st.download_button(f"📥 Télécharger {title}", team_df.to_csv(index=False).encode('utf-8'), f'{title.replace(" ", "_").lower()}.csv', 'text/csv', key=title)
+    st.download_button(f"📥 Télécharger {title}", team_df.to_csv(index=False).encode('utf-8'), f'{title.replace(" ", "_").lower()}.csv', 'text/csv', key=f"download_{title}")
+
+def display_team_formation(team, formation):
+    """Affiche la composition de l'équipe sur un terrain de football stylisé."""
+    st.markdown("##### Composition Visuelle")
+
+    lines = FORMATION_LINES.get(formation)
+    if not lines:
+        st.warning(f"Aperçu de la formation non disponible pour {formation}.")
+        return
+
+    # Créer un dictionnaire de joueurs par position pour un accès facile
+    team_by_position = {}
+    # Gérer les postes multiples (ex: 2 CM)
+    for p_data in team:
+        pos = p_data['position']
+        if pos not in team_by_position:
+            team_by_position[pos] = []
+        team_by_position[pos].append(p_data['player'])
+
+    # Simuler un terrain de foot
+    st.markdown(
+        """
+        <div style="background-color: #2E7D32; border: 2px solid white; border-radius: 10px; padding: 20px; color: white;">
+        """, unsafe_allow_html=True
+    )
+
+    for line in lines:
+        cols = st.columns(len(line))
+        for i, pos_template in enumerate(line):
+            with cols[i]:
+                player = None
+                # Récupérer le prochain joueur disponible pour ce poste
+                if pos_template in team_by_position and team_by_position[pos_template]:
+                    player = team_by_position[pos_template].pop(0)
+
+                if player is not None:
+                    st.markdown(
+                        f"""
+                        <div style="text-align: center; background-color: rgba(0,0,0,0.3); padding: 10px; border-radius: 8px; margin: 2px;">
+                            <strong>{player['name'].split(' ')[-1]}</strong><br>
+                            <small>{pos_template} | {player['overall_rating']}</small>
+                        </div>
+                        """, unsafe_allow_html=True
+                    )
+                else:
+                     st.markdown(
+                        f"""
+                        <div style="text-align: center; background-color: rgba(255,255,255,0.1); padding: 10px; border-radius: 8px; margin: 2px; opacity: 0.7;">
+                            <strong>-</strong><br>
+                            <small>{pos_template}</small>
+                        </div>
+                        """, unsafe_allow_html=True
+                    )
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
 
 def search_players(df, positions_to_find, budget, criteria, filters):
     """Filtre et retourne les meilleurs joueurs pour les postes et quantités demandés."""
     candidate_df = df.copy()
-    
+
     # Appliquer les filtres de base (âge, etc.)
     if 'age_range' in filters:
         candidate_df = candidate_df[candidate_df['age'].between(*filters['age_range'])]
@@ -148,7 +212,10 @@ def search_players(df, positions_to_find, budget, criteria, filters):
         candidate_df = candidate_df[candidate_df['potential'].between(*filters['potential_range'])]
     if 'min_overall' in filters:
         candidate_df = candidate_df[candidate_df['overall_rating'] >= filters['min_overall']]
-    
+
+    if not filters.get('include_free_agents', True):
+        candidate_df = candidate_df[candidate_df['value_numeric'] > 0]
+
     # Filtrer par budget
     candidate_df = candidate_df[candidate_df['value_numeric'] <= budget]
 
@@ -157,7 +224,7 @@ def search_players(df, positions_to_find, budget, criteria, filters):
     for position, count in positions_to_find.items():
         if count == 0:
             continue
-        
+
         # Trouver les joueurs éligibles pour le poste
         eligible_for_pos = candidate_df[candidate_df['positions'].apply(lambda x: can_play_position(x, position))]
 
@@ -177,116 +244,124 @@ def main():
         if df is None: return
         st.success(f"✅ **{len(df):,} joueurs chargés avec succès !**")
 
-        tab1, tab2 = st.tabs(["🏗️ **Constructeur d'Équipe**", "🔍 **Recherche de Joueurs**"])
+        # --- Section: Constructeur d'Équipe ---
+        st.header("🏗️ Constructeur d'Équipe Optimisé")
+        st.info("Le solveur recherche la meilleure équipe mathématiquement possible, puis une deuxième équipe avec les joueurs restants.")
 
-        with tab1:
-            st.header("Constructeur d'Équipe Optimisé")
-            st.info("Le solveur recherche la meilleure équipe mathématiquement possible, puis une deuxième équipe avec les joueurs restants.")
-            col1, col2 = st.columns([1, 2])
-            with col1:
-                st.subheader("Configuration")
-                formation = st.selectbox("📋 Formation", list(FORMATIONS.keys()), key="t1_formation")
-                budget = st.number_input("💰 Budget total (M€)", min_value=0.1, value=50.0, step=5.0, key="t1_budget")
-                criteria = st.selectbox("🎯 Maximiser", ["overall_rating", "potential", "score"],
-                                        format_func=lambda x: {"overall_rating": "Moyenne Générale", "potential": "Potentiel Moyen", "score": "Score Moyen (Overall+Potentiel)"}[x], key="t1_criteria")
+        team_builder_cols = st.columns([1, 2])
+        with team_builder_cols[0]:
+            st.subheader("Configuration")
+            formation = st.selectbox("📋 Formation", list(FORMATIONS.keys()), key="t1_formation")
+            budget = st.number_input("💰 Budget total (M€)", min_value=0.1, value=50.0, step=5.0, key="t1_budget")
+            criteria = st.selectbox("🎯 Maximiser", ["overall_rating", "potential", "score"],
+                                    format_func=lambda x: {"overall_rating": "Moyenne Générale", "potential": "Potentiel Moyen", "score": "Score Moyen (Overall+Potentiel)"}[x], key="t1_criteria")
+
+            with st.expander("Filtres avancés"):
+                age_range = st.slider("🎂 Âge", 16, 45, (16, 40), key="t1_age")
+                potential_range = st.slider("💎 Potentiel", 40, 99, (40, 99), key="t1_potential")
+                min_overall = st.slider("⭐ Overall minimum", 40, 99, 40, key="t1_overall")
+                include_free_agents = st.checkbox("🆓 Inclure agents libres (€0)", value=True, key="t1_free_agents")
+
+            filters = {'age_range': age_range, 'potential_range': potential_range, 'min_overall': min_overall, 'include_free_agents': include_free_agents}
+
+            if st.button("🚀 TROUVER LES ÉQUIPES OPTIMALES", type="primary", use_container_width=True):
+                with st.spinner("🧠 Recherche de la meilleure équipe..."):
+                    team1 = solve_team(df, formation, budget, criteria, filters)
+                    st.session_state.team1_results = team1
+                    st.session_state.team2_results = None # Reset
                 
-                with st.expander("Filtres avancés"):
-                    age_range = st.slider("🎂 Âge", 16, 45, (16, 40), key="t1_age")
-                    potential_range = st.slider("💎 Potentiel", 40, 99, (40, 99), key="t1_potential")
-                    min_overall = st.slider("⭐ Overall minimum", 40, 99, 40, key="t1_overall")
-                    include_free_agents = st.checkbox("🆓 Inclure agents libres (€0)", value=True, key="t1_free_agents")
-                
-                filters = {'age_range': age_range, 'potential_range': potential_range, 'min_overall': min_overall, 'include_free_agents': include_free_agents}
-
-                if st.button("🚀 TROUVER LES ÉQUIPES OPTIMALES", type="primary", use_container_width=True):
-                    with st.spinner("🧠 Recherche de la meilleure équipe..."):
-                        team1 = solve_team(df, formation, budget, criteria, filters)
-                        st.session_state.team1_results = team1
-                        st.session_state.team2_results = None # Reset
-
-                    if team1:
-                        with st.spinner("🧠 Recherche de la deuxième meilleure équipe..."):
-                            team1_ids = [p['player']['player_id'] for p in team1]
-                            team1_cost = sum(p['player']['value_numeric'] for p in team1)
-                            remaining_budget = budget - team1_cost
-
-                            team2 = solve_team(df, formation, remaining_budget, criteria, filters, excluded_player_ids=team1_ids)
-                            st.session_state.team2_results = team2
-
-            with col2:
-                if 'team1_results' in st.session_state:
-                    team1 = st.session_state.team1_results
-                    if team1 is None:
-                        st.error("❌ **Aucune solution trouvée.** Il est mathématiquement impossible de former une équipe avec ces filtres et ce budget. Essayez d'augmenter le budget ou d'élargir les filtres.")
-                    else:
-                        display_team_results(team1, formation, budget, criteria, "🏆 Meilleure Équipe Possible")
+                if team1:
+                    with st.spinner("🧠 Recherche de la deuxième meilleure équipe..."):
+                        team1_ids = [p['player']['player_id'] for p in team1]
+                        team1_cost = sum(p['player']['value_numeric'] for p in team1)
+                        remaining_budget = budget - team1_cost
                         
-                        st.markdown("---")
+                        team2 = solve_team(df, formation, remaining_budget, criteria, filters, excluded_player_ids=team1_ids)
+                        st.session_state.team2_results = team2
 
-                        team2 = st.session_state.get('team2_results')
-                        display_team_results(team2, formation, budget, criteria, "🥈 Deuxième Meilleure Équipe (Nouveaux Joueurs)")
-
-
-        with tab2:
-            st.header("🔍 Recherche de Joueurs par Critères")
-            st.info("Définissez vos besoins pour chaque poste, votre budget et vos critères de performance pour trouver les perles rares.")
-
-            col1, col2 = st.columns([1, 2])
-
-            with col1:
-                st.subheader("Critères de Recherche")
-                search_budget = st.slider("💰 Budget maximum par joueur (M€)", 0.1, 200.0, 20.0, 0.5, key="s_budget")
-                search_criteria = st.selectbox("🎯 Trier par", ["overall_rating", "potential", "score"],
-                                               format_func=lambda x: {"overall_rating": "Note Générale", "potential": "Potentiel", "score": "Score (Note+Potentiel)"}[x], key="s_criteria")
-
-                with st.expander("Filtres de performance"):
-                    search_age = st.slider("🎂 Âge", 16, 45, (16, 35), key="s_age")
-                    search_potential = st.slider("💎 Potentiel", 40, 99, (60, 99), key="s_potential")
-                    search_overall = st.slider("⭐ Overall minimum", 40, 99, 60, key="s_overall")
-                
-                search_filters = {'age_range': search_age, 'potential_range': search_potential, 'min_overall': search_overall}
-
-            with col2:
-                st.subheader("Quantité de joueurs par poste")
-                
-                cols_pos = st.columns(4)
-                positions_to_find = {}
-                # Diviser les postes pour un meilleur affichage
-                split1 = ALL_POSITIONS[:len(ALL_POSITIONS)//2]
-                split2 = ALL_POSITIONS[len(ALL_POSITIONS)//2:]
-                
-                with st.container():
-                    c1, c2 = st.columns(2)
-                    with c1:
-                        for pos in split1:
-                            positions_to_find[pos] = st.number_input(pos, min_value=0, max_value=10, value=0, key=f"s_{pos}")
-                    with c2:
-                        for pos in split2:
-                            positions_to_find[pos] = st.number_input(pos, min_value=0, max_value=10, value=0, key=f"s_{pos}")
-
-            if st.button("🔍 TROUVER DES JOUEURS", type="primary", use_container_width=True):
-                total_players_requested = sum(positions_to_find.values())
-                if total_players_requested == 0:
-                    st.warning("Veuillez indiquer le nombre de joueurs que vous souhaitez trouver pour au moins un poste.")
+        with team_builder_cols[1]:
+            if 'team1_results' in st.session_state:
+                team1 = st.session_state.team1_results
+                if team1 is None:
+                    st.error("❌ **Aucune solution trouvée.** Il est mathématiquement impossible de former une équipe avec ces filtres et ce budget. Essayez d'augmenter le budget ou d'élargir les filtres.")
                 else:
-                    with st.spinner("🕵️‍♂️ Recherche des joueurs correspondants..."):
-                        found_players_df = search_players(df, positions_to_find, search_budget, search_criteria, search_filters)
-                        st.session_state.found_players = found_players_df
+                    st.subheader("🏆 Meilleure Équipe Possible")
+                    display_team_formation(team1, formation)
+                    with st.expander("Voir les détails et statistiques"):
+                        display_team_results(team1, formation, budget, criteria, "🏆 Meilleure Équipe Possible")
+
+                    st.markdown("---")
+
+                    team2 = st.session_state.get('team2_results')
+                    if team2:
+                        st.subheader("🥈 Deuxième Meilleure Équipe (Nouveaux Joueurs)")
+                        display_team_formation(team2, formation)
+                        with st.expander("Voir les détails et statistiques"):
+                            display_team_results(team2, formation, budget, criteria, "🥈 Deuxième Meilleure Équipe (Nouveaux Joueurs)")
+                    else:
+                        st.info("Aucune deuxième équipe n'a pu être formée avec les joueurs et le budget restants.")
+
+        st.divider()
+
+        # --- Section: Recherche de Joueurs ---
+        st.header("🔍 Recherche de Joueurs par Critères")
+        st.info("Définissez vos besoins pour chaque poste, votre budget et vos critères de performance pour trouver les perles rares.")
+
+        search_cols = st.columns([1, 2])
+        with search_cols[0]:
+            st.subheader("Critères de Recherche")
+            search_budget = st.slider("💰 Budget maximum par joueur (M€)", 0.1, 200.0, 20.0, 0.5, key="s_budget")
+            search_criteria = st.selectbox("🎯 Trier par", ["overall_rating", "potential", "score"],
+                                           format_func=lambda x: {"overall_rating": "Note Générale", "potential": "Potentiel", "score": "Score (Note+Potentiel)"}[x], key="s_criteria")
+
+            with st.expander("Filtres de performance"):
+                search_age = st.slider("🎂 Âge", 16, 45, (16, 35), key="s_age")
+                search_potential = st.slider("💎 Potentiel", 40, 99, (60, 99), key="s_potential")
+                search_overall = st.slider("⭐ Overall minimum", 40, 99, 60, key="s_overall")
+                search_free_agents = st.checkbox("🆓 Inclure agents libres (€0)", value=True, key="s_free_agents")
             
-            if 'found_players' in st.session_state:
-                results = st.session_state.found_players
-                st.subheader(f"Résultats de la Recherche ({len(results)} joueurs trouvés)")
+            search_filters = {'age_range': search_age, 'potential_range': search_potential, 'min_overall': search_overall, 'include_free_agents': search_free_agents}
 
-                if results.empty:
-                    st.warning("Aucun joueur ne correspond à tous vos critères. Essayez d'élargir votre recherche.")
-                else:
-                    display_df = results[['requested_position', 'name', 'age', 'overall_rating', 'potential', 'value_numeric', 'club_name']].copy()
-                    display_df.rename(columns={
-                        'requested_position': 'Poste Cherché', 'name': 'Nom', 'age': 'Âge',
-                        'overall_rating': 'Note', 'potential': 'Potentiel', 'value_numeric': 'Valeur (M€)', 'club_name': 'Club'
-                    }, inplace=True)
-                    st.dataframe(display_df.sort_values(by=['Poste Cherché', search_criteria], ascending=[True, False]), use_container_width=True, hide_index=True)
-                    st.download_button("📥 Télécharger les résultats", results.to_csv(index=False).encode('utf-8'), 'recherche_joueurs.csv', 'text/csv')
+        with search_cols[1]:
+            st.subheader("Quantité de joueurs par poste")
+
+            positions_to_find = {}
+            # Diviser les postes pour un meilleur affichage
+            split1 = ALL_POSITIONS[:len(ALL_POSITIONS)//2]
+            split2 = ALL_POSITIONS[len(ALL_POSITIONS)//2:]
+
+            with st.container():
+                c1, c2 = st.columns(2)
+                with c1:
+                    for pos in split1:
+                        positions_to_find[pos] = st.number_input(pos, min_value=0, max_value=10, value=0, key=f"s_{pos}")
+                with c2:
+                    for pos in split2:
+                        positions_to_find[pos] = st.number_input(pos, min_value=0, max_value=10, value=0, key=f"s_{pos}")
+
+        if st.button("🔍 TROUVER DES JOUEURS", type="primary", use_container_width=True):
+            total_players_requested = sum(positions_to_find.values())
+            if total_players_requested == 0:
+                st.warning("Veuillez indiquer le nombre de joueurs que vous souhaitez trouver pour au moins un poste.")
+            else:
+                with st.spinner("🕵️‍♂️ Recherche des joueurs correspondants..."):
+                    found_players_df = search_players(df, positions_to_find, search_budget, search_criteria, search_filters)
+                    st.session_state.found_players = found_players_df
+
+        if 'found_players' in st.session_state:
+            results = st.session_state.found_players
+            st.subheader(f"Résultats de la Recherche ({len(results)} joueurs trouvés)")
+
+            if results.empty:
+                st.warning("Aucun joueur ne correspond à tous vos critères. Essayez d'élargir votre recherche.")
+            else:
+                display_df = results[['requested_position', 'name', 'age', 'overall_rating', 'potential', 'value_numeric', 'club_name']].copy()
+                display_df.rename(columns={
+                    'requested_position': 'Poste Cherché', 'name': 'Nom', 'age': 'Âge',
+                    'overall_rating': 'Note', 'potential': 'Potentiel', 'value_numeric': 'Valeur (M€)', 'club_name': 'Club'
+                }, inplace=True)
+                st.dataframe(display_df.sort_values(by=['Poste Cherché', search_criteria], ascending=[True, False]), use_container_width=True, hide_index=True)
+                st.download_button("📥 Télécharger les résultats", results.to_csv(index=False).encode('utf-8'), 'recherche_joueurs.csv', 'text/csv')
 
 if __name__ == "__main__":
     main()
